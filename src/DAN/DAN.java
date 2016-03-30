@@ -474,19 +474,23 @@ public class DAN {
             DataSet ds = new DataSet(data);
             if (ds.timestamp.equals(data_timestamp)) {
                 // no new data
+//                logging("DownStreamThread("+ feature +"): no new data, skip");
                 return;
             }
 
             if (ds.size() == 0) {
                 // server responded, but the container is empty
+//                logging("DownStreamThread("+ feature +"): empty data, skip");
                 return;
             }
             if (ds.newest().data.equals(null)) {
                 // server responded, but newest data is null
+//                logging("DownStreamThread("+ feature +"): null data, skip");
                 return;
             }
             data_timestamp = ds.timestamp;
-            subscriber.send_odf(feature, new DataSet(data));
+//            logging("DownStreamThread("+ feature +") send_odf: "+ feature);
+            subscriber.send_odf(feature, ds);
         }
     }
 
@@ -785,7 +789,7 @@ public class DAN {
             }
         }
 
-        SessionThread.instance().connect(CSMAPI.ENDPOINT);
+        SessionThread.instance().connect(ec_endpoint);
     }
     
     static public void reregister (String ec_endpoint) {
