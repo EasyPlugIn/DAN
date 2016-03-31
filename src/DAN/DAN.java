@@ -20,7 +20,7 @@ import org.json.JSONObject;
 import CSMAPI.CSMAPI;
 
 public class DAN {
-    static public final String version = "20160330";
+    static public final String version = "20160331";
     static private String log_tag = "DAN";
     static private final String local_log_tag = "DAN";
 
@@ -67,21 +67,13 @@ public class DAN {
     }
 
     static public abstract class Subscriber {
-        public void send_event (EventTag event, String message) {
-            ODFObject odf_object = new ODFObject(event, message);
-            odf_handler(odf_object);
-        }
-
-        public void send_odf (String feature, DataSet dataset) {
-            ODFObject odf_object = new ODFObject(feature, dataset);
-            odf_handler(odf_object);
-        }
-
         public abstract void odf_handler (ODFObject odf_object);
     }
 
     static public enum EventTag {
+        FOUND_NEW_EC,
         REGISTER_FAILED,
+        REGISTER_GAVEUP,
         REGISTER_SUCCEED,
     };
 
@@ -151,6 +143,10 @@ public class DAN {
                         // It's easyconnect packet
                         InetAddress ec_raw_addr = packet.getAddress();
                         String ec_endpoint = "http://"+ ec_raw_addr.getHostAddress() +":9999";
+                        if (!detected_ec_heartbeat.containsKey(ec_endpoint)) {
+            	            logging("FOUND_NEW_EC: "+ ec_endpoint);
+            	            broadcast_control_message(EventTag.FOUND_NEW_EC, ec_endpoint);
+                        }
         	            detected_ec_heartbeat.put(ec_endpoint, System.currentTimeMillis());
                     }
                 }
@@ -279,6 +275,7 @@ public class DAN {
 			        		}
 			        		if (!session_status) {
 			        			logging("Registeration result: Give up");
+		                    	broadcast_control_message(EventTag.REGISTER_GAVEUP, CSMAPI.ENDPOINT);
 			        		}
 						}
 						break;
@@ -471,26 +468,21 @@ public class DAN {
         }
 
         private void deliver_data (JSONArray data) throws JSONException {
-            DataSet ds = new DataSet(data);
-            if (ds.timestamp.equals(data_timestamp)) {
-                // no new data
-//                logging("DownStreamThread("+ feature +"): no new data, skip");
+            DataSet dataset = new DataSet(data);
+            if (dataset.timestamp.equals(data_timestamp)) {
+                // no new datum
                 return;
             }
-
-            if (ds.size() == 0) {
+            if (dataset.size() == 0) {
                 // server responded, but the container is empty
-//                logging("DownStreamThread("+ feature +"): empty data, skip");
                 return;
             }
-            if (ds.newest().data.equals(null)) {
+            if (dataset.newest().data.equals(null)) {
                 // server responded, but newest data is null
-//                logging("DownStreamThread("+ feature +"): null data, skip");
                 return;
             }
-            data_timestamp = ds.timestamp;
-//            logging("DownStreamThread("+ feature +") send_odf: "+ feature);
-            subscriber.send_odf(feature, ds);
+            data_timestamp = dataset.timestamp;
+            subscriber.odf_handler(new ODFObject(feature, dataset));
         }
     }
 
@@ -574,7 +566,7 @@ public class DAN {
 
     static private void broadcast_control_message (EventTag event, String message) {
         for (Subscriber handler: event_subscribers) {
-            handler.send_event(event, message);
+            handler.odf_handler(new ODFObject(event, message));
         }
     }
 
@@ -740,17 +732,22 @@ public class DAN {
     // * Public API * //
     // ************** //
     static public void init (String log_tag) {
+        DAN.log_tag = log_tag;
+        CSMAPI.set_logtag(log_tag);
+        
         logging("DAN.init()");
         if (initialized) {
         	logging("Already initialized");
         	return;
         }
-        DAN.log_tag = log_tag;
-        CSMAPI.set_logtag(log_tag);
         SearchLANECThread.instance();
         
         CSMAPI.ENDPOINT = DEFAULT_EC_HOST;
         DAN.request_interval = 150;
+
+        upstream_thread_pool.clear();
+        downstream_thread_pool.clear();
+        detected_ec_heartbeat.clear();
         initialized = true;
     }
 
@@ -839,6 +836,10 @@ public class DAN {
     
     static public void shutdown () {
     	logging("DAN.shutdown()");
+        if (!initialized) {
+        	logging("Already shutdown");
+        	return;
+        }
         if (upstream_thread_pool != null) {
             for (String feature: upstream_thread_pool.keySet()) {
                 UpStreamThread t = upstream_thread_pool.get(feature);
@@ -883,6 +884,8 @@ public class DAN {
 		for (Map.Entry<String, Long> p: detected_ec_heartbeat.entrySet()) {
 			if (System.currentTimeMillis() - p.getValue() < HEART_BEAT_DEAD_MILLISECOND) {
 				t.add(p.getKey());
+			} else {
+				detected_ec_heartbeat.remove(p);
 			}
 		}
 		return t.toArray(new String[]{});
