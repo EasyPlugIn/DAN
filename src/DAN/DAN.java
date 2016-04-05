@@ -20,7 +20,7 @@ import org.json.JSONObject;
 import CSMAPI.CSMAPI;
 
 public class DAN {
-    static public final String version = "20160331";
+    static public final String version = "20160405";
     static private String log_tag = "DAN";
     static private final String local_log_tag = "DAN";
 
@@ -162,23 +162,23 @@ public class DAN {
     
     
     /*
-     * SessionManager handles the session status between DAN and EasyConnect.
+     * SessionThread handles the session status between DAN and EasyConnect.
      * 		``session_status`` records the status,
      * 			and this value SHOULD NOT be true after disconnect() and before connect().
      * 
-     * SessionManager is a Thread singleton class.
-     * SessionManager.instance() returns the singleton instance.
+     * SessionThread is a Thread singleton class.
+     * SessionThread.instance() returns the singleton instance.
      * 		The instance is created AND RUN after first call
      * 
-     * SessionManager.connect(String) registers to the given EasyConnect host
+     * SessionThread.connect(String) registers to the given EasyConnect host
      * 		This method retries 3 times, between each retry it sleeps 2000 milliseconds
      * 		This method is non-blocking, because it notifies subscribers in ``event_subscribers``.
      * 
-     * SessionManager.disconnect() deregisters from previous connected EasyConnect host
+     * SessionThread.disconnect() deregisters from previous connected EasyConnect host
      * 		This method retries 3 times, between each retry it sleeps 2000 milliseconds
      * 		This method is blocking, because it doesn't generate events. Re-register also needs it to be blocking.
      * 
-     * SessionManager.kill() stops the thread and cleans the singleton instance
+     * SessionThread.kill() stops the thread and cleans the singleton instance
      */
     static private class SessionThread extends Thread {
     	static private final int RETRY_COUNT = 3;
@@ -318,6 +318,11 @@ public class DAN {
             	logging("SessionThread.kill(): not running, skip");
         		return;
         	}
+        	
+        	if (status()) {
+        		disconnect();
+        	}
+        	
         	self.interrupt();
         	try {
 				self.join();
