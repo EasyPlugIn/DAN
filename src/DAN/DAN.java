@@ -20,7 +20,7 @@ import org.json.JSONObject;
 import CSMAPI.CSMAPI;
 
 public class DAN {
-    static public final String version = "20160405";
+    static public final String version = "20160407";
     static private String log_tag = "DAN";
     static private final String local_log_tag = "DAN";
 
@@ -73,7 +73,6 @@ public class DAN {
     static public enum EventTag {
         FOUND_NEW_EC,
         REGISTER_FAILED,
-        REGISTER_GAVEUP,
         REGISTER_SUCCEED,
     };
 
@@ -265,17 +264,17 @@ public class DAN {
 			        			session_status = CSMAPI.register(d_id, profile);
 			                    logging("Registeration result: " + CSMAPI.ENDPOINT +": "+ session_status);
 			                    if (session_status) {
-			                    	broadcast_control_message(EventTag.REGISTER_SUCCEED, CSMAPI.ENDPOINT);
-			                    	break;
-			                    } else {
-			                    	broadcast_control_message(EventTag.REGISTER_FAILED, CSMAPI.ENDPOINT);
+		                    		break;
 			                    }
 								logging("Wait "+ RETRY_INTERVAL +" milliseconds before retry");
 			                    Thread.sleep(RETRY_INTERVAL);
 			        		}
-			        		if (!session_status) {
+			        		
+			        		if (session_status) {
+		                    	broadcast_control_message(EventTag.REGISTER_SUCCEED, CSMAPI.ENDPOINT);
+			        		} else {
 			        			logging("Registeration result: Give up");
-		                    	broadcast_control_message(EventTag.REGISTER_GAVEUP, CSMAPI.ENDPOINT);
+		                    	broadcast_control_message(EventTag.REGISTER_FAILED, CSMAPI.ENDPOINT);
 			        		}
 						}
 						break;
