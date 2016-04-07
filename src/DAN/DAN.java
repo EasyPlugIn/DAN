@@ -6,9 +6,10 @@ import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.SocketException;
 import java.util.ArrayList;
-import java.util.HashMap;
+import java.util.Collections;
 import java.util.HashSet;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.Semaphore;
@@ -24,7 +25,7 @@ public class DAN {
     static private String log_tag = "DAN";
     static private final String local_log_tag = "DAN";
 
-    static private final HashSet<Subscriber> event_subscribers = new HashSet<Subscriber>();
+    static private final Set<Subscriber> event_subscribers = Collections.synchronizedSet(new HashSet<Subscriber>());
     static private final String DEFAULT_EC_HOST = "http://openmtc.darkgerm.com:9999";
     static public  final int EC_BROADCAST_PORT = 17000;
     static private final Long HEART_BEAT_DEAD_MILLISECOND = 3000l;
@@ -33,8 +34,8 @@ public class DAN {
     static private JSONObject profile;
 
     static private long request_interval = 150;
-    static private final HashMap<String, UpStreamThread> upstream_thread_pool = new HashMap<String, UpStreamThread>();
-    static private final HashMap<String, DownStreamThread> downstream_thread_pool = new HashMap<String, DownStreamThread>();
+    static private final ConcurrentHashMap<String, UpStreamThread> upstream_thread_pool = new ConcurrentHashMap<String, UpStreamThread>();
+    static private final ConcurrentHashMap<String, DownStreamThread> downstream_thread_pool = new ConcurrentHashMap<String, DownStreamThread>();
     static private final ConcurrentHashMap<String, Long> detected_ec_heartbeat = new ConcurrentHashMap<String, Long>();
 
     static public class ODFObject {
@@ -114,18 +115,24 @@ public class DAN {
 
         public void kill () {
             logging("SearchLANECThread.kill()");
-            if (self == null) {
-            	logging("SearchLANECThread.kill(): not running, skip");
-                return;
-            }
-            self.socket.close();
-            try {
-				self.join();
-			} catch (InterruptedException e) {
-				e.printStackTrace();
+			try {
+				instance_lock.acquire();
+	            if (self == null) {
+	            	logging("SearchLANECThread.kill(): not running, skip");
+	                return;
+	            }
+	            self.socket.close();
+	            try {
+					self.join();
+				} catch (InterruptedException e) {
+					e.printStackTrace();
+				}
+	            self = null;
+	        	instance_lock.release();
+	        	logging("SearchLANECThread.kill(): singleton cleaned");
+			} catch (InterruptedException e1) {
+				e1.printStackTrace();
 			}
-            self = null;
-        	logging("SearchLANECThread.kill(): singleton cleaned");
         }
 
         public void run () {
@@ -149,9 +156,9 @@ public class DAN {
         	            detected_ec_heartbeat.put(ec_endpoint, System.currentTimeMillis());
                     }
                 }
-            } catch (SocketException e) {
-                logging("SearchLANECThread: SocketException");
-                e.printStackTrace();
+//            } catch (SocketException e) {
+//                logging("SearchLANECThread: SocketException");
+//                e.printStackTrace();
             } catch (IOException e) {
                 logging("SearchLANECThread: IOException");
                 e.printStackTrace();
@@ -313,23 +320,29 @@ public class DAN {
         
         public void kill () {
         	logging("SessionThread.kill()");
-        	if (self == null) {
-            	logging("SessionThread.kill(): not running, skip");
-        		return;
-        	}
-        	
-        	if (status()) {
-        		disconnect();
-        	}
-        	
-        	self.interrupt();
-        	try {
-				self.join();
-			} catch (InterruptedException e) {
-				e.printStackTrace();
+			try {
+				instance_lock.acquire();
+	        	if (self == null) {
+	            	logging("SessionThread.kill(): not running, skip");
+	        		return;
+	        	}
+	        	
+	        	if (status()) {
+	        		disconnect();
+	        	}
+	        	
+	        	self.interrupt();
+	        	try {
+					self.join();
+				} catch (InterruptedException e) {
+					e.printStackTrace();
+				}
+	        	self = null;
+	        	logging("SessionThread.kill(): singleton cleaned");
+				instance_lock.release();
+			} catch (InterruptedException e1) {
+				e1.printStackTrace();
 			}
-        	self = null;
-        	logging("SessionThread.kill(): singleton cleaned");
         }
         
         static public boolean status () {
@@ -569,9 +582,11 @@ public class DAN {
     }
 
     static private void broadcast_control_message (EventTag event, String message) {
-        for (Subscriber handler: event_subscribers) {
-            handler.odf_handler(new ODFObject(event, message));
-        }
+    	synchronized (event_subscribers) {
+            for (Subscriber handler: event_subscribers) {
+                handler.odf_handler(new ODFObject(event, message));
+            }
+		}
     }
 
     static private class DANDataObject {
@@ -812,7 +827,9 @@ public class DAN {
 
     static public void subscribe (String feature, Subscriber subscriber) {
         if (feature.equals("Control_channel")) {
-            event_subscribers.add(subscriber);
+        	synchronized (event_subscribers) {
+        		event_subscribers.add(subscriber);
+        	}
         } else {
             if (!downstream_thread_pool.containsKey(feature)) {
                 DownStreamThread dst = new DownStreamThread(feature, subscriber);
@@ -831,7 +848,9 @@ public class DAN {
     }
 
     static public void unsubcribe (Subscriber handler) {
-        event_subscribers.remove(handler);
+    	synchronized (event_subscribers) {
+    		event_subscribers.remove(handler);
+    	}
     }
 
     static public void deregister () {
@@ -844,28 +863,29 @@ public class DAN {
         	logging("Already shutdown");
         	return;
         }
-        if (upstream_thread_pool != null) {
-            for (String feature: upstream_thread_pool.keySet()) {
-                UpStreamThread t = upstream_thread_pool.get(feature);
-                t.stop_working();
-                try {
-					t.join();
-				} catch (InterruptedException e) {
-					e.printStackTrace();
-				}
-            }
+        
+		for (Map.Entry<String, UpStreamThread> p: upstream_thread_pool.entrySet()) {
+            UpStreamThread t = p.getValue();
+            t.stop_working();
+            try {
+				t.join();
+			} catch (InterruptedException e) {
+				e.printStackTrace();
+			}
+		}
+		upstream_thread_pool.clear();
+
+		for (Map.Entry<String, DownStreamThread> p: downstream_thread_pool.entrySet()) {
+            DownStreamThread t = p.getValue();
+            t.stop_working();
+            try {
+				t.join();
+			} catch (InterruptedException e) {
+				e.printStackTrace();
+			}
         }
-        if (downstream_thread_pool != null) {
-            for (String feature: downstream_thread_pool.keySet()) {
-                DownStreamThread t = downstream_thread_pool.get(feature);
-                t.stop_working();
-                try {
-					t.join();
-				} catch (InterruptedException e) {
-					e.printStackTrace();
-				}
-            }
-        }
+		downstream_thread_pool.clear();
+		
     	SearchLANECThread.instance().kill();
     	SessionThread.instance().kill();
     	initialized = false;
