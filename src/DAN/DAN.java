@@ -21,7 +21,7 @@ import org.json.JSONObject;
 import CSMAPI.CSMAPI;
 
 public class DAN {
-    static public final String version = "20160407";
+    static public final String version = "20160408";
     static private String log_tag = "DAN";
     static private final String local_log_tag = "DAN";
 
