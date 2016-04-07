@@ -4,10 +4,10 @@ import java.net.DatagramPacket;
 import java.net.DatagramSocket;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
-import java.net.SocketException;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
@@ -36,7 +36,7 @@ public class DAN {
     static private long request_interval = 150;
     static private final ConcurrentHashMap<String, UpStreamThread> upstream_thread_pool = new ConcurrentHashMap<String, UpStreamThread>();
     static private final ConcurrentHashMap<String, DownStreamThread> downstream_thread_pool = new ConcurrentHashMap<String, DownStreamThread>();
-    static private final ConcurrentHashMap<String, Long> detected_ec_heartbeat = new ConcurrentHashMap<String, Long>();
+    static private final Map<String, Long> detected_ec_heartbeat = Collections.synchronizedMap(new LinkedHashMap<String, Long>());
 
     static public class ODFObject {
         enum Type {CONTROL_CHANNEL, ODF}
@@ -149,11 +149,13 @@ public class DAN {
                         // It's easyconnect packet
                         InetAddress ec_raw_addr = packet.getAddress();
                         String ec_endpoint = "http://"+ ec_raw_addr.getHostAddress() +":9999";
-                        if (!detected_ec_heartbeat.containsKey(ec_endpoint)) {
-            	            logging("FOUND_NEW_EC: "+ ec_endpoint);
-            	            broadcast_control_message(EventTag.FOUND_NEW_EC, ec_endpoint);
-                        }
-        	            detected_ec_heartbeat.put(ec_endpoint, System.currentTimeMillis());
+                        synchronized (detected_ec_heartbeat) {
+                            if (!detected_ec_heartbeat.containsKey(ec_endpoint)) {
+                	            logging("FOUND_NEW_EC: "+ ec_endpoint);
+                	            broadcast_control_message(EventTag.FOUND_NEW_EC, ec_endpoint);
+                            }
+            	            detected_ec_heartbeat.put(ec_endpoint, System.currentTimeMillis());
+						}
                     }
                 }
 //            } catch (SocketException e) {
@@ -766,7 +768,9 @@ public class DAN {
 
         upstream_thread_pool.clear();
         downstream_thread_pool.clear();
-        detected_ec_heartbeat.clear();
+        synchronized (detected_ec_heartbeat) {
+        	detected_ec_heartbeat.clear();
+        }
         initialized = true;
     }
 
@@ -905,13 +909,15 @@ public class DAN {
     static public String[] available_ec () {
 		ArrayList<String> t = new ArrayList<String>();
 		t.add(DEFAULT_EC_HOST);
-		for (Map.Entry<String, Long> p: detected_ec_heartbeat.entrySet()) {
-			if (System.currentTimeMillis() - p.getValue() < HEART_BEAT_DEAD_MILLISECOND) {
-				t.add(p.getKey());
-			} else {
-				detected_ec_heartbeat.remove(p);
+        synchronized (detected_ec_heartbeat) {
+			for (Map.Entry<String, Long> p: detected_ec_heartbeat.entrySet()) {
+				if (System.currentTimeMillis() - p.getValue() < HEART_BEAT_DEAD_MILLISECOND) {
+					t.add(p.getKey());
+				} else {
+					detected_ec_heartbeat.remove(p);
+				}
 			}
-		}
+        }
 		return t.toArray(new String[]{});
     }
     
