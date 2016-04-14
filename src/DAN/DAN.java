@@ -19,9 +19,10 @@ import org.json.JSONException;
 import org.json.JSONObject;
 
 import CSMAPI.CSMAPI;
+import CSMAPI.CSMAPI.CSMError;
 
 public class DAN {
-    static public final String version = "20160408";
+    static public final String version = "20160414";
     static private String log_tag = "DAN";
     static private final String local_log_tag = "DAN";
 
@@ -270,11 +271,15 @@ public class DAN {
 						} else {
 							CSMAPI.ENDPOINT = sc.ec_endpoint;
 			        		for (int i = 0; i < RETRY_COUNT; i++) {
-			        			session_status = CSMAPI.register(d_id, profile);
-			                    logging("Registeration result: " + CSMAPI.ENDPOINT +": "+ session_status);
-			                    if (session_status) {
-		                    		break;
-			                    }
+			        			try {
+									session_status = CSMAPI.register(d_id, profile);
+				                    logging("Registeration result: " + CSMAPI.ENDPOINT +": "+ session_status);
+				                    if (session_status) {
+			                    		break;
+				                    }
+								} catch (CSMError e) {
+									logging("CSMAPI.register() throws CSMError");
+								}
 								logging("Wait "+ RETRY_INTERVAL +" milliseconds before retry");
 			                    Thread.sleep(RETRY_INTERVAL);
 			        		}
@@ -295,9 +300,15 @@ public class DAN {
 						} else {
 							boolean deregister_success = false;
 			        		for (int i = 0; i < RETRY_COUNT; i++) {
-			        			deregister_success = CSMAPI.deregister(d_id);
-			                    logging("Deregisteration result: " + CSMAPI.ENDPOINT +": "+ deregister_success);
-			                    if (deregister_success) { break; }
+			        			try {
+									deregister_success = CSMAPI.deregister(d_id);
+				                    logging("Deregisteration result: " + CSMAPI.ENDPOINT +": "+ deregister_success);
+				                    if (deregister_success) {
+				                    	break;
+				                    }
+								} catch (CSMError e) {
+									logging("CSMAPI.deregister() throws CSMError");
+								}
 								logging("Wait "+ RETRY_INTERVAL +" milliseconds before retry");
 			                    Thread.sleep(RETRY_INTERVAL);
 			        		}
@@ -418,7 +429,11 @@ public class DAN {
                     JSONObject data = acc.toJSONObject();
                     if (SessionThread.status()) {
                         logging("UpStreamThread("+ feature +") push data: "+ data);
-                        CSMAPI.push(d_id, feature, data);
+                        try {
+							CSMAPI.push(d_id, feature, data);
+						} catch (CSMError e) {
+							logging("CSMAPI.push() throws CSMError");
+						}
                     } else {
                         logging("UpStreamThread("+ feature +") skip. (ec_status == false)");
                     }
@@ -481,7 +496,9 @@ public class DAN {
                 } catch (InterruptedException e) {
                     logging("DownStreamThread("+ feature +") interrupted");
                     e.printStackTrace();
-                }
+                } catch (CSMError e) {
+					logging("CSMAPI.pull() throws CSMError");
+				}
             }
             logging("DownStreamThread("+ feature +") stops");
         }
