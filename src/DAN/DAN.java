@@ -22,7 +22,7 @@ import CSMAPI.CSMAPI;
 import CSMAPI.CSMAPI.CSMError;
 
 public class DAN {
-    static public final String version = "20160414";
+    static public final String version = "20160417";
     static private String log_tag = "DAN";
     static private final String local_log_tag = "DAN";
 
@@ -105,7 +105,6 @@ public class DAN {
 	        	if (self == null) {
 	                logging("SearchLANECThread.instance(): create instance");
 	        		self = new SearchLANECThread();
-	                self.start();
 	        	}
 	        	instance_lock.release();
 			} catch (InterruptedException e) {
@@ -222,7 +221,6 @@ public class DAN {
 				if (self == null) {
 	                logging("SessionThread.instance(): create instance");
 					self = new SessionThread();
-					self.start();
 				}
 	            instance_lock.release();
 			} catch (InterruptedException e) {
@@ -778,7 +776,8 @@ public class DAN {
         	logging("Already initialized");
         	return;
         }
-        SearchLANECThread.instance();
+        SearchLANECThread.instance().start();
+        SessionThread.instance().start();
         
         CSMAPI.ENDPOINT = DEFAULT_EC_HOST;
         DAN.request_interval = 150;
