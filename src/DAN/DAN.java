@@ -22,7 +22,7 @@ import CSMAPI.CSMAPI;
 import CSMAPI.CSMAPI.CSMError;
 
 public class DAN {
-    static public final String version = "20160417";
+    static public final String version = "20160424";
     static private String log_tag = "DAN";
     static private final String local_log_tag = "DAN";
 
@@ -649,6 +649,8 @@ public class DAN {
                     ret[i] = (double)tmp[i];
                 }
                 return ret;
+            } else if (obj instanceof double[]) {
+            	return (double[])obj;
             }
             return null;
         }
