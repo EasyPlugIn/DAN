@@ -24,7 +24,7 @@ import CSMAPI.CSMAPI.CSMError;
 public class DAN {
     static public final String version = "20160424";
     static private String log_tag = "DAN";
-    static private final String local_log_tag = "DAN";
+    static private final String dan_log_tag = "DAN";
 
     static private final Set<Subscriber> event_subscribers = Collections.synchronizedSet(new HashSet<Subscriber>());
     static private final String DEFAULT_EC_HOST = "http://openmtc.darkgerm.com:9999";
@@ -131,7 +131,7 @@ public class DAN {
 	        	instance_lock.release();
 	        	logging("SearchLANECThread.kill(): singleton cleaned");
 			} catch (InterruptedException e1) {
-				e1.printStackTrace();
+	        	logging("SearchLANECThread.kill(): InterruptedException");
 			}
         }
 
@@ -151,7 +151,7 @@ public class DAN {
                         String ec_endpoint = "http://"+ ec_raw_addr.getHostAddress() +":9999";
                         synchronized (detected_ec_heartbeat) {
                             if (!detected_ec_heartbeat.containsKey(ec_endpoint)) {
-                	            logging("FOUND_NEW_EC: "+ ec_endpoint);
+                	            logging("FOUND_NEW_EC: %s", ec_endpoint);
                 	            broadcast_control_message(EventTag.FOUND_NEW_EC, ec_endpoint);
                             }
             	            detected_ec_heartbeat.put(ec_endpoint, System.currentTimeMillis());
@@ -163,7 +163,6 @@ public class DAN {
 //                e.printStackTrace();
             } catch (IOException e) {
                 logging("SearchLANECThread: IOException");
-                e.printStackTrace();
             }
         }
     }
@@ -225,19 +224,17 @@ public class DAN {
 	            instance_lock.release();
 			} catch (InterruptedException e) {
 				logging("SessionThread.instance(): InterruptedException");
-				e.printStackTrace();
 			}
             return self;
     	}
     	
     	public void connect (String ec_endpoint) {
-            logging("SessionThread.connect("+ ec_endpoint +")");
+            logging("SessionThread.connect(%s)", ec_endpoint);
             SessionCommand sc = new SessionCommand(CommandOpCode.REGISTER, ec_endpoint);
             try {
 				command_channel.add(sc);
 			} catch (IllegalStateException e) {
-				logging("SessionThread.connect(): command channel is full");
-				e.printStackTrace();
+				logging("SessionThread.connect(): IllegalStateException, command channel is full");
 			}
     	}
         
@@ -248,11 +245,9 @@ public class DAN {
 				command_channel.add(sc);
 				response_channel.take();
 			} catch (IllegalStateException e) {
-				logging("SessionThread.disconnect(): command channel is full");
-				e.printStackTrace();
+				logging("SessionThread.connect(): IllegalStateException, command channel is full");
 			} catch (InterruptedException e) {
-				logging("SessionThread.disconnect(): response_channel is interrupted");
-				e.printStackTrace();
+				logging("SessionThread.disconnect(): InterruptedException, response_channel is interrupted");
 			}
     	}
     	
@@ -263,55 +258,55 @@ public class DAN {
         			SessionCommand sc = command_channel.take();
         			switch (sc.op_code) {
 					case REGISTER:
-						logging("Registering to "+ sc.ec_endpoint);
+						logging("SessionThread.run(): REGISTER: %s", sc.ec_endpoint);
 						if (session_status && !CSMAPI.ENDPOINT.equals(sc.ec_endpoint)) {
-							logging("Cannot register to another EasyConnect before deregister from it");
+							logging("SessionThread.run(): REGISTER: Already registered to another EC");
 						} else {
 							CSMAPI.ENDPOINT = sc.ec_endpoint;
 			        		for (int i = 0; i < RETRY_COUNT; i++) {
 			        			try {
 									session_status = CSMAPI.register(d_id, profile);
-				                    logging("Registeration result: " + CSMAPI.ENDPOINT +": "+ session_status);
+				                    logging("SessionThread.run(): REGISTER: %s: %b", CSMAPI.ENDPOINT, session_status);
 				                    if (session_status) {
 			                    		break;
 				                    }
 								} catch (CSMError e) {
-									logging("CSMAPI.register() throws CSMError");
+									logging("SessionThread.run(): REGISTER: CSMError");
 								}
-								logging("Wait "+ RETRY_INTERVAL +" milliseconds before retry");
+								logging("SessionThread.run(): REGISTER: Wait %d milliseconds before retry", RETRY_INTERVAL);
 			                    Thread.sleep(RETRY_INTERVAL);
 			        		}
 			        		
 			        		if (session_status) {
 		                    	broadcast_control_message(EventTag.REGISTER_SUCCEED, CSMAPI.ENDPOINT);
 			        		} else {
-			        			logging("Registeration result: Give up");
+			        			logging("SessionThread.run(): REGISTER: Give up");
 		                    	broadcast_control_message(EventTag.REGISTER_FAILED, CSMAPI.ENDPOINT);
 			        		}
 						}
 						break;
 						
 					case DEREGISTER:
-						logging("Deregistering from "+ CSMAPI.ENDPOINT);
+						logging("SessionThread.run(): DEREGISTER: %s", CSMAPI.ENDPOINT);
 						if (!session_status) {
-							logging("Not registered to any EC, abort");
+							logging("SessionThread.run(): DEREGISTER: Not registered to any EC, abort");
 						} else {
 							boolean deregister_success = false;
 			        		for (int i = 0; i < RETRY_COUNT; i++) {
 			        			try {
 									deregister_success = CSMAPI.deregister(d_id);
-				                    logging("Deregisteration result: " + CSMAPI.ENDPOINT +": "+ deregister_success);
+				                    logging("SessionThread.run(): DEREGISTER: %s: %b", CSMAPI.ENDPOINT, deregister_success);
 				                    if (deregister_success) {
 				                    	break;
 				                    }
 								} catch (CSMError e) {
-									logging("CSMAPI.deregister() throws CSMError");
+									logging("SessionThread.run(): DEREGISTER: CSMError");
 								}
-								logging("Wait "+ RETRY_INTERVAL +" milliseconds before retry");
+								logging("SessionThread.run(): DEREGISTER: Wait %d milliseconds before retry", RETRY_INTERVAL);
 			                    Thread.sleep(RETRY_INTERVAL);
 			        		}
 			        		if (!deregister_success) {
-			        			logging("Deregisteration result: Give up");
+			        			logging("SessionThread.run(): DEREGISTER: Give up");
 			        		}
 			        		// no matter what result is, set session_status to false because I've already retry several times
 			                session_status = false;
@@ -325,7 +320,6 @@ public class DAN {
         		}
 			} catch (InterruptedException e) {
 				logging("SessionThread.run(): InterruptedException");
-				e.printStackTrace();
 			}
         }
         
@@ -346,13 +340,13 @@ public class DAN {
 	        	try {
 					self.join();
 				} catch (InterruptedException e) {
-					e.printStackTrace();
+	            	logging("SessionThread.kill(): InterruptedException");
 				}
 	        	self = null;
 	        	logging("SessionThread.kill(): singleton cleaned");
 				instance_lock.release();
 			} catch (InterruptedException e1) {
-				e1.printStackTrace();
+            	logging("SessionThread.kill(): InterruptedException");
 			}
         }
         
@@ -385,19 +379,19 @@ public class DAN {
             try {
                 queue.put(data);
             } catch (InterruptedException e) {
-                e.printStackTrace();
+                logging("UpStreamThread(%s).enqueue(): InterruptedException", feature);
             }
         }
 
         public void run () {
-            logging("UpStreamThread("+ feature +") starts");
+            logging("UpStreamThread(%s) starts", feature);
             try {
                 if (!json_array_has_string(DAN.profile.getJSONArray("df_list"), feature)) {
-                    logging("UpStreamThread("+ feature +"): feature not exists, exit");
+                    logging("UpStreamThread(%s).run(): feature not exists, exit", feature);
                     return;
                 }
             } catch (JSONException e1) {
-                logging("UpStreamThread("+ feature +") checking failed");
+                logging("UpStreamThread(%s).run(): JSONException", feature);
                 return;
             }
             working_permission = true;
@@ -416,7 +410,7 @@ public class DAN {
 //    				while (!queue.isEmpty()) {	// This may cause starvation
                         DANDataObject tmp = queue.take();
                         if (!working_permission) {
-                            logging("UpStreamThread("+ feature +") droped");
+                            logging("UpStreamThread(%s).run(): droped", feature);
                             return;
                         }
                         acc.accumulate(tmp);
@@ -426,21 +420,20 @@ public class DAN {
 
                     JSONObject data = acc.toJSONObject();
                     if (SessionThread.status()) {
-                        logging("UpStreamThread("+ feature +") push data: "+ data);
+                        logging("UpStreamThread(%s).run(): push %s", feature, data.toString());
                         try {
 							CSMAPI.push(d_id, feature, data);
 						} catch (CSMError e) {
-							logging("CSMAPI.push() throws CSMError");
+							logging("UpStreamThread(%s).run(): CSMError", feature);
 						}
                     } else {
-                        logging("UpStreamThread("+ feature +") skip. (ec_status == false)");
+                        logging("UpStreamThread(%s).run(): skip. (ec_status == false)", feature);
                     }
                 } catch (InterruptedException e) {
-                    logging("UpStreamThread("+ feature +") interrupted");
-                    e.printStackTrace();
+                    logging("UpStreamThread(%s).run(): InterruptedException", feature);
                 }
             }
-            logging("UpStreamThread("+ feature +") stops");
+            logging("UpStreamThread(%s) ends", feature);
         }
     }
 
@@ -463,14 +456,14 @@ public class DAN {
         }
 
         public void run () {
-            logging("DownStreamThread("+ feature +") starts");
+            logging("DownStreamThread(%s) starts", feature);
             try {
                 if (!json_array_has_string(DAN.profile.getJSONArray("df_list"), feature)) {
-                    logging("DownStreamThread("+ feature +"): feature not exists, exit");
+                    logging("DownStreamThread(%s).run(): feature not exists, exit", feature);
                     return;
                 }
             } catch (JSONException e1) {
-                logging("DownStreamThread("+ feature +") checking failed");
+                logging("DownStreamThread(%s).run(): JSONException", feature);
                 return;
             }
             working_permission = true;
@@ -483,22 +476,20 @@ public class DAN {
                     }
                     timestamp = System.currentTimeMillis();
                     if (SessionThread.status()) {
-                        logging("DownStreamThread("+ feature +") pull data");
+                        logging("DownStreamThread(%s).run(): pull", feature);
                         deliver_data(CSMAPI.pull(d_id, feature));
                     } else {
-                        logging("DownStreamThread("+ feature +") skip. (ec_status == false)");
+                        logging("DownStreamThread(%s).run(): skip. (ec_status == false)", feature);
                     }
                 } catch (JSONException e) {
-                    logging("DownStreamThread("+ feature +") JSONException");
-                    e.printStackTrace();
+                    logging("DownStreamThread(%s).run(): JSONException", feature);
                 } catch (InterruptedException e) {
-                    logging("DownStreamThread("+ feature +") interrupted");
-                    e.printStackTrace();
+                    logging("DownStreamThread(%s).run(): InterruptedException", feature);
                 } catch (CSMError e) {
-					logging("CSMAPI.pull() throws CSMError");
+                    logging("DownStreamThread(%s).run(): CSMError", feature);
 				}
             }
-            logging("DownStreamThread("+ feature +") stops");
+            logging("DownStreamThread(%s) ends", feature);
         }
 
         private void deliver_data (JSONArray data) throws JSONException {
@@ -532,7 +523,7 @@ public class DAN {
                 this.dataset = in;
                 this.timestamp = this.dataset.getJSONArray(0).getString(0);
             } catch (JSONException e) {
-                e.printStackTrace();
+                logging("DataSet: JSONException");
             }
         }
 
@@ -560,7 +551,7 @@ public class DAN {
                 ret.put("data", this.dataset);
                 return ret.toString();
             } catch (JSONException e) {
-                e.printStackTrace();
+                logging("DataSet.toString(): JSONException");
             }
             return "";
         }
@@ -587,18 +578,22 @@ public class DAN {
                     return true;
                 }
             } catch (JSONException e) {
-                e.printStackTrace();
+                logging("json_array_has_string(): JSONException");
             }
         }
         return false;
     }
+    
+    static public void logging (String format, Object... args) {
+        logging(String.format(format, args));
+    }
 
     static private void logging (String message) {
-		String padding = message.startsWith(" ") || message.startsWith("[") ? "" : " ";
-        System.out.printf("[%s][%s]%s%s%n", log_tag, local_log_tag, padding, message);
+        System.out.printf("[%s][%s] %s%n", log_tag, dan_log_tag, message);
     }
 
     static private void broadcast_control_message (EventTag event, String message) {
+        logging("broadcast_control_message()");
     	synchronized (event_subscribers) {
             for (Subscriber handler: event_subscribers) {
                 handler.odf_handler(new ODFObject(event, message));
@@ -621,7 +616,7 @@ public class DAN {
                     // YA, it's double array
                     return true;
                 } catch (JSONException e) {
-                    e.printStackTrace();
+                    logging("DANDataObject.is_double_array(): JSONException");
                 }
             }
             if (obj instanceof double[]) {
@@ -660,8 +655,8 @@ public class DAN {
                 try {
                     value = to_double_array(obj);
                 } catch (JSONException e) {
+                    logging("DANDataObject: JSONException");
                     value = obj;
-                    e.printStackTrace();
                 }
             } else {
                 value = obj;
@@ -703,8 +698,7 @@ public class DAN {
                 }
                 ret.put("data", data);
             } catch (JSONException e) {
-                logging("DANDataObject.toString() JSONException");
-                e.printStackTrace();
+                logging("DANDataObject.toJSONObject() JSONException");
             }
             return ret;
         }
@@ -773,9 +767,9 @@ public class DAN {
         DAN.log_tag = log_tag;
         CSMAPI.set_logtag(log_tag);
         
-        logging("DAN.init()");
+        logging("init()");
         if (initialized) {
-        	logging("Already initialized");
+        	logging("init(): Already initialized");
         	return;
         }
         SearchLANECThread.instance().start();
@@ -807,7 +801,7 @@ public class DAN {
             }
             return profile.getString("d_name");
         } catch (JSONException e) {
-            e.printStackTrace();
+        	logging("get_d_name(): JSONException");
         }
         return "Error";
     }
@@ -823,7 +817,7 @@ public class DAN {
             try {
                 DAN.profile.put("is_sim", false);
             } catch (JSONException e) {
-                e.printStackTrace();
+            	logging("register(): JSONException");
             }
         }
 
@@ -831,7 +825,7 @@ public class DAN {
     }
     
     static public void reregister (String ec_endpoint) {
-    	logging("reregister to "+ ec_endpoint);
+    	logging("reregister(%s)", ec_endpoint);
         SessionThread.instance().disconnect();
         SessionThread.instance().connect(ec_endpoint);
     }
@@ -880,9 +874,9 @@ public class DAN {
     }
     
     static public void shutdown () {
-    	logging("DAN.shutdown()");
+    	logging("shutdown()");
         if (!initialized) {
-        	logging("Already shutdown");
+        	logging("shutdown(): Already shutdown");
         	return;
         }
         
@@ -892,7 +886,7 @@ public class DAN {
             try {
 				t.join();
 			} catch (InterruptedException e) {
-				e.printStackTrace();
+	        	logging("shutdown(): UpStreamThread: InterruptedException");
 			}
 		}
 		upstream_thread_pool.clear();
@@ -903,7 +897,7 @@ public class DAN {
             try {
 				t.join();
 			} catch (InterruptedException e) {
-				e.printStackTrace();
+	        	logging("shutdown(): DownStreamThread: InterruptedException");
 			}
         }
 		downstream_thread_pool.clear();
@@ -919,7 +913,7 @@ public class DAN {
 
     static public void set_request_interval (long request_interval) {
         if (request_interval > 0) {
-            logging("Set DAN.request_interval = "+ request_interval);
+            logging("set_request_interval(%d)", request_interval);
             DAN.request_interval = request_interval;
         }
     }
