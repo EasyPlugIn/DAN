@@ -22,9 +22,10 @@ import CSMAPI.CSMAPI;
 import CSMAPI.CSMAPI.CSMError;
 
 public class DAN {
-    static public final String version = "20160424";
+    static public final String version = "20160425";
     static private String log_tag = "DAN";
     static private final String dan_log_tag = "DAN";
+    static public final String NAME_CONTROL_CHANNEL = "Control_channel";
 
     static private final Set<Subscriber> event_subscribers = Collections.synchronizedSet(new HashSet<Subscriber>());
     static private final String DEFAULT_EC_HOST = "http://openmtc.darkgerm.com:9999";
@@ -39,44 +40,41 @@ public class DAN {
     static private final ConcurrentHashMap<String, DownStreamThread> downstream_thread_pool = new ConcurrentHashMap<String, DownStreamThread>();
     static private final Map<String, Long> detected_ec_heartbeat = Collections.synchronizedMap(new LinkedHashMap<String, Long>());
 
-    static public class ODFObject {
-        enum Type {CONTROL_CHANNEL, ODF}
-        public Type odf_type;
-
-        // EVENT object
-        public EventTag event_tag;
-        public String message;
-
-        // ODF object
-        public String feature;
-        public DataSet dataset;
-
-        public ODFObject (EventTag event_name, String message) {
-            this.odf_type = Type.CONTROL_CHANNEL;
-            this.event_tag = event_name;
-            this.message = message;
-            this.feature = null;
-            this.dataset = null;
-        }
-
-        public ODFObject (String feature, DataSet dataset) {
-            this.odf_type = Type.ODF;
-            this.event_tag = null;
-            this.message = null;
-            this.feature = feature;
-            this.dataset = dataset;
-        }
-    }
-
-    static public abstract class Subscriber {
-        public abstract void odf_handler (ODFObject odf_object);
-    }
-
     static public enum EventTag {
         FOUND_NEW_EC,
         REGISTER_FAILED,
         REGISTER_SUCCEED,
+        PUSH_FAILED,
+        PUSH_SUCCEED,
+        PULL_FAILED,
+        DEREGISTER_FAILED,
+        DEREGISTER_SUCCEED,
     };
+
+    static public class ODFObject {
+		// data part
+        public DataSet dataset;
+        
+        // event part
+        public EventTag event_tag;
+        public String message;
+
+        public ODFObject (EventTag event_tag, String message) {
+            this.dataset = null;
+            this.event_tag = event_tag;
+            this.message = message;
+        }
+
+        public ODFObject (DataSet dataset) {
+            this.dataset = dataset;
+            this.event_tag = null;
+            this.message = null;
+        }
+    }
+
+    static public abstract class Subscriber {
+        public abstract void odf_handler (String feature, ODFObject odf_object);
+    }
 
     // *********** //
     // * Threads * //
@@ -305,10 +303,15 @@ public class DAN {
 								logging("SessionThread.run(): DEREGISTER: Wait %d milliseconds before retry", RETRY_INTERVAL);
 			                    Thread.sleep(RETRY_INTERVAL);
 			        		}
-			        		if (!deregister_success) {
+
+			        		if (deregister_success) {
+		                    	broadcast_control_message(EventTag.DEREGISTER_SUCCEED, CSMAPI.ENDPOINT);
+			        		} else {
 			        			logging("SessionThread.run(): DEREGISTER: Give up");
+		                    	broadcast_control_message(EventTag.DEREGISTER_FAILED, CSMAPI.ENDPOINT);
 			        		}
-			        		// no matter what result is, set session_status to false because I've already retry several times
+			        		// No matter what result is,
+			        		//  set session_status to false because I've already retry <RETRY_COUNT> times
 			                session_status = false;
 						}
 		                response_channel.add(0);
@@ -423,8 +426,10 @@ public class DAN {
                         logging("UpStreamThread(%s).run(): push %s", feature, data.toString());
                         try {
 							CSMAPI.push(d_id, feature, data);
+							broadcast_control_message(EventTag.PUSH_SUCCEED, feature);
 						} catch (CSMError e) {
 							logging("UpStreamThread(%s).run(): CSMError", feature);
+							broadcast_control_message(EventTag.PUSH_FAILED, feature);
 						}
                     } else {
                         logging("UpStreamThread(%s).run(): skip. (ec_status == false)", feature);
@@ -487,6 +492,7 @@ public class DAN {
                     logging("DownStreamThread(%s).run(): InterruptedException", feature);
                 } catch (CSMError e) {
                     logging("DownStreamThread(%s).run(): CSMError", feature);
+					broadcast_control_message(EventTag.PULL_FAILED, feature);
 				}
             }
             logging("DownStreamThread(%s) ends", feature);
@@ -507,7 +513,7 @@ public class DAN {
                 return;
             }
             data_timestamp = dataset.timestamp;
-            subscriber.odf_handler(new ODFObject(feature, dataset));
+            subscriber.odf_handler(feature, new ODFObject(dataset));
         }
     }
 
@@ -596,7 +602,7 @@ public class DAN {
         logging("broadcast_control_message()");
     	synchronized (event_subscribers) {
             for (Subscriber handler: event_subscribers) {
-                handler.odf_handler(new ODFObject(event, message));
+                handler.odf_handler(NAME_CONTROL_CHANNEL, new ODFObject(event, message));
             }
 		}
     }
@@ -842,7 +848,7 @@ public class DAN {
     }
 
     static public void subscribe (String feature, Subscriber subscriber) {
-        if (feature.equals("Control_channel")) {
+        if (feature.equals(NAME_CONTROL_CHANNEL)) {
         	synchronized (event_subscribers) {
         		event_subscribers.add(subscriber);
         	}
