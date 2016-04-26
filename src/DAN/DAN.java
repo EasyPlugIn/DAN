@@ -22,7 +22,7 @@ import CSMAPI.CSMAPI;
 import CSMAPI.CSMAPI.CSMError;
 
 public class DAN {
-    static public final String version = "20160425";
+    static public final String version = "20160426";
     static private String log_tag = "DAN";
     static private final String dan_log_tag = "DAN";
     static public final String NAME_CONTROL_CHANNEL = "Control_channel";
@@ -53,20 +53,23 @@ public class DAN {
 
     static public class ODFObject {
 		// data part
-        public DataSet dataset;
+    	public String timestamp;
+        public JSONArray data;
         
         // event part
         public EventTag event_tag;
         public String message;
 
         public ODFObject (EventTag event_tag, String message) {
-            this.dataset = null;
+        	this.timestamp = null;
+            this.data = null;
             this.event_tag = event_tag;
             this.message = message;
         }
 
-        public ODFObject (DataSet dataset) {
-            this.dataset = dataset;
+        public ODFObject (String timestamp, JSONArray data) {
+        	this.timestamp = timestamp;
+            this.data = data;
             this.event_tag = null;
             this.message = null;
         }
@@ -499,77 +502,22 @@ public class DAN {
         }
 
         private void deliver_data (JSONArray data) throws JSONException {
-            DataSet dataset = new DataSet(data);
-            if (dataset.timestamp.equals(data_timestamp)) {
-                // no new datum
+            logging("DownStreamThread(%s).deliver_data(): %s", feature, data.toString());
+        	if (data.length() == 0) {
+                logging("DownStreamThread(%s).deliver_data(): No any data", feature);
+                return;
+        	}
+        	
+        	JSONArray newest = data.getJSONArray(0);
+        	String newest_timestamp = newest.getString(0);
+        	JSONArray newest_data = newest.getJSONArray(1);
+            if (newest_timestamp.equals(data_timestamp)) {
+                logging("DownStreamThread(%s).deliver_data(): No new data", feature);
                 return;
             }
-            if (dataset.size() == 0) {
-                // server responded, but the container is empty
-                return;
-            }
-            if (dataset.newest().data.equals(null)) {
-                // server responded, but newest data is null
-                return;
-            }
-            data_timestamp = dataset.timestamp;
-            subscriber.odf_handler(feature, new ODFObject(dataset));
-        }
-    }
-
-    static public class DataSet {
-        public String timestamp;
-        private JSONArray dataset;
-
-        public DataSet (JSONArray in) {
-            this.timestamp = "";
-            this.dataset = null;
-
-            try {
-                this.dataset = in;
-                this.timestamp = this.dataset.getJSONArray(0).getString(0);
-            } catch (JSONException e) {
-                logging("DataSet: JSONException");
-            }
-        }
-
-        public Data newest () throws JSONException {
-            return nth(0);
-        }
-
-        public Data nth (int n) throws JSONException {
-            Data ret = new Data();
-            JSONArray tmp = this.dataset.getJSONArray(n);
-            ret.timestamp = tmp.getString(0);
-            ret.data = tmp.getJSONArray(1);
-            return ret;
-        }
-
-        public int size () {
-            return this.dataset.length();
-        }
-
-        @Override
-        public String toString () {
-            JSONObject ret = new JSONObject();
-            try {
-                ret.put("timestamp", this.timestamp);
-                ret.put("data", this.dataset);
-                return ret.toString();
-            } catch (JSONException e) {
-                logging("DataSet.toString(): JSONException");
-            }
-            return "";
-        }
-    }
-
-    static public class Data {
-        public String timestamp;
-        public JSONArray data;
-
-        public Data () {
-            this.timestamp = "";
-            this.data = new JSONArray();
+            
+            data_timestamp = newest_timestamp;
+            subscriber.odf_handler(feature, new ODFObject(newest_timestamp, newest_data));
         }
     }
 
