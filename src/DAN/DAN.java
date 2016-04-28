@@ -22,23 +22,24 @@ import CSMAPI.CSMAPI;
 import CSMAPI.CSMAPI.CSMError;
 
 public class DAN {
-    static public final String version = "20160426";
+	// ************* //
+    // * Constants * //
+    // ************* //
+	
+    static public final String version = "20160428";
+    static public final String CONTROL_CHANNEL = "Control_channel";
+    
+    
+	// ************************ //
+    // * Internal Used Values * //
+    // ************************ //
+    
+    static private long request_interval = 150;
     static private String log_tag = "DAN";
     static private final String dan_log_tag = "DAN";
-    static public final String NAME_CONTROL_CHANNEL = "Control_channel";
-
-    static private final Set<Subscriber> event_subscribers = Collections.synchronizedSet(new HashSet<Subscriber>());
     static private final String DEFAULT_EC_HOST = "http://openmtc.darkgerm.com:9999";
     static public  final int EC_BROADCAST_PORT = 17000;
     static private final Long HEART_BEAT_DEAD_MILLISECOND = 3000l;
-    static private boolean initialized;
-    static private String d_id;
-    static private JSONObject profile;
-
-    static private long request_interval = 150;
-    static private final ConcurrentHashMap<String, UpStreamThread> upstream_thread_pool = new ConcurrentHashMap<String, UpStreamThread>();
-    static private final ConcurrentHashMap<String, DownStreamThread> downstream_thread_pool = new ConcurrentHashMap<String, DownStreamThread>();
-    static private final Map<String, Long> detected_ec_heartbeat = Collections.synchronizedMap(new LinkedHashMap<String, Long>());
 
     static public enum EventTag {
         FOUND_NEW_EC,
@@ -50,35 +51,21 @@ public class DAN {
         DEREGISTER_FAILED,
         DEREGISTER_SUCCEED,
     };
+    
+    
+	// **************************** //
+    // * Internal Used Containers * //
+    // **************************** //
 
-    static public class ODFObject {
-		// data part
-    	public String timestamp;
-        public JSONArray data;
-        
-        // event part
-        public EventTag event_tag;
-        public String message;
+    static private final Set<Subscriber> event_subscribers = Collections.synchronizedSet(new HashSet<Subscriber>());
+    static private String d_id;
+    static private JSONObject profile;
+    static private final ConcurrentHashMap<String, UpStreamThread> upstream_thread_pool = new ConcurrentHashMap<String, UpStreamThread>();
+    static private final ConcurrentHashMap<String, DownStreamThread> downstream_thread_pool = new ConcurrentHashMap<String, DownStreamThread>();
+    static private final Map<String, Long> detected_ec_heartbeat = Collections.synchronizedMap(new LinkedHashMap<String, Long>());
+    static private boolean initialized;
 
-        public ODFObject (EventTag event_tag, String message) {
-        	this.timestamp = null;
-            this.data = null;
-            this.event_tag = event_tag;
-            this.message = message;
-        }
-
-        public ODFObject (String timestamp, JSONArray data) {
-        	this.timestamp = timestamp;
-            this.data = data;
-            this.event_tag = null;
-            this.message = null;
-        }
-    }
-
-    static public abstract class Subscriber {
-        public abstract void odf_handler (String feature, ODFObject odf_object);
-    }
-
+    
     // *********** //
     // * Threads * //
     // *********** //
@@ -168,7 +155,6 @@ public class DAN {
         }
     }
     
-    
     /*
      * SessionThread handles the session status between DAN and EasyConnect.
      * 		``session_status`` records the status,
@@ -229,7 +215,7 @@ public class DAN {
             return self;
     	}
     	
-    	public void connect (String ec_endpoint) {
+    	public void register (String ec_endpoint) {
             logging("SessionThread.connect(%s)", ec_endpoint);
             SessionCommand sc = new SessionCommand(CommandOpCode.REGISTER, ec_endpoint);
             try {
@@ -239,7 +225,7 @@ public class DAN {
 			}
     	}
         
-    	public void disconnect () {
+    	public void deregister () {
             logging("SessionThread.disconnect()");
             SessionCommand sc = new SessionCommand(CommandOpCode.DEREGISTER, "");
             try {
@@ -339,7 +325,7 @@ public class DAN {
 	        	}
 	        	
 	        	if (status()) {
-	        		disconnect();
+	        		deregister();
 	        	}
 	        	
 	        	self.interrupt();
@@ -367,13 +353,14 @@ public class DAN {
     static private class UpStreamThread extends Thread {
         boolean working_permission;
         String feature;
-        LinkedBlockingQueue<DANDataObject> queue;
+        final LinkedBlockingQueue<JSONArray> queue = new LinkedBlockingQueue<JSONArray>();
         long timestamp;
+        Reducer reducer;
 
         public UpStreamThread (String feature) {
             this.feature = feature;
-            this.queue = new LinkedBlockingQueue<DANDataObject>();
             this.timestamp = 0;
+            this.reducer = Reducer.LAST;
         }
 
         public void stop_working () {
@@ -381,7 +368,12 @@ public class DAN {
             this.interrupt();
         }
 
-        public void enqueue (DANDataObject data) {
+        public void enqueue (JSONArray data, Reducer reducer) {
+            enqueue(data);
+            this.reducer = reducer;
+        }
+
+        public void enqueue (JSONArray data) {
             try {
                 queue.put(data);
             } catch (InterruptedException e) {
@@ -409,22 +401,19 @@ public class DAN {
                     }
                     timestamp = System.currentTimeMillis();
 
-                    DANDataObject acc = queue.take();
-                    int buffer_count = 1;
-                    int queue_len = queue.size();
-                    for (int i = 0; i < queue_len; i++) {
-//    				while (!queue.isEmpty()) {	// This may cause starvation
-                        DANDataObject tmp = queue.take();
+                    JSONArray acc = queue.take();
+                    int count = queue.size();
+                    for (int i = 0; i < count; i++) {
+                        JSONArray tmp = queue.take();
                         if (!working_permission) {
                             logging("UpStreamThread(%s).run(): droped", feature);
                             return;
                         }
-                        acc.accumulate(tmp);
-                        buffer_count += 1;
+                        acc = reducer.reduce(acc, tmp, i, count - 1);
                     }
-                    acc.average(buffer_count);
 
-                    JSONObject data = acc.toJSONObject();
+                    JSONObject data = new JSONObject();
+                    data.put("data", acc);
                     if (SessionThread.status()) {
                         logging("UpStreamThread(%s).run(): push %s", feature, data.toString());
                         try {
@@ -521,9 +510,9 @@ public class DAN {
         }
     }
 
-    // *************************** //
-    // * Internal Used Functions * //
-    // *************************** //
+    // ***************************** //
+    // * Internal Helper Functions * //
+    // ***************************** //
 
     static private boolean json_array_has_string (JSONArray json_array, String str) {
         for (int i = 0; i < json_array.length(); i++) {
@@ -550,173 +539,54 @@ public class DAN {
         logging("broadcast_control_message()");
     	synchronized (event_subscribers) {
             for (Subscriber handler: event_subscribers) {
-                handler.odf_handler(NAME_CONTROL_CHANNEL, new ODFObject(event, message));
+                handler.odf_handler(CONTROL_CHANNEL, new ODFObject(event, message));
             }
 		}
-    }
-
-    static private class DANDataObject {
-        private Object value;
-
-        static private boolean is_double_array (Object obj) {
-            if (obj instanceof JSONArray) {
-                try {
-                    JSONArray tmp = (JSONArray)obj;
-                    for (int i = 0; i < tmp.length(); i++) {
-                        if (!(tmp.get(i) instanceof Double)) {
-                            return false;
-                        }
-                    }
-                    // YA, it's double array
-                    return true;
-                } catch (JSONException e) {
-                    logging("DANDataObject.is_double_array(): JSONException");
-                }
-            }
-            if (obj instanceof double[]) {
-                return true;
-            } else if (obj instanceof float[]) {
-                return true;
-            }
-            return false;
-        }
-
-        static private double[] to_double_array (Object obj) throws JSONException {
-            if (obj instanceof JSONArray) {
-                JSONArray tmp = (JSONArray)obj;
-                int length = tmp.length();
-                double[] ret = new double[length];
-                for (int i = 0; i < length; i++) {
-                    ret[i] = tmp.getDouble(i);
-                }
-                return ret;
-            } else if (obj instanceof float[]) {
-                float[] tmp = (float[])obj;
-                int length = tmp.length;
-                double[] ret = new double[length];
-                for (int i = 0; i < length; i++) {
-                    ret[i] = (double)tmp[i];
-                }
-                return ret;
-            } else if (obj instanceof double[]) {
-            	return (double[])obj;
-            }
-            return null;
-        }
-
-        public DANDataObject (Object obj) {
-            if (is_double_array(obj)) {
-                try {
-                    value = to_double_array(obj);
-                } catch (JSONException e) {
-                    logging("DANDataObject: JSONException");
-                    value = obj;
-                }
-            } else {
-                value = obj;
-            }
-        }
-
-        public JSONObject toJSONObject () {
-            JSONArray data = new JSONArray();
-            JSONObject ret = new JSONObject();
-            try {
-                if (value instanceof Integer) {
-                    data.put((Integer)value);
-                } else if (value instanceof Float) {
-                    data.put((Float)value);
-                } else if (value instanceof Double) {
-                    data.put((Double)value);
-                } else if (value instanceof int[]) {
-                    for (int i: (int[])value) {
-                        data.put(i);
-                    }
-                } else if (value instanceof float[]) {
-                    for (float i: (float[])value) {
-                        data.put(i);
-                    }
-                } else if (value instanceof double[]) {
-                    for (double i: (double[])value) {
-                        data.put(i);
-                    }
-                } else if (value instanceof byte[]) {
-                    for (byte i: (byte[])value) {
-                        data.put(i);
-                    }
-                } else if (value instanceof String) {
-                    return ret.put("data", (String)value);
-                } else if (value instanceof JSONArray) {
-                    data = (JSONArray)value;
-                } else if (value instanceof JSONObject) {
-                    data.put((JSONObject)value);
-                }
-                ret.put("data", data);
-            } catch (JSONException e) {
-                logging("DANDataObject.toJSONObject() JSONException");
-            }
-            return ret;
-        }
-
-        public void accumulate (DANDataObject obj) {
-            if (!value.getClass().equals(obj.value.getClass())) {
-                return;
-            }
-
-            if (value instanceof Integer) {
-                value = (Integer)value + (Integer)obj.value;
-            } else if (value instanceof Float) {
-                value = (Float)value + (Float)obj.value;
-            } else if (value instanceof Double) {
-                value = (Double)value + (Double)obj.value;
-            } else if (value instanceof int[]) {
-                for (int i = 0; i < ((int[])value).length; i++) {
-                    ((int[])value)[i] += ((int[])obj.value)[i];
-                }
-            } else if (value instanceof float[]) {
-                for (int i = 0; i < ((float[])value).length; i++) {
-                    ((float[])value)[i] += ((float[])obj.value)[i];
-                }
-            } else if (value instanceof double[]) {
-                for (int i = 0; i < ((double[])value).length; i++) {
-                    ((double[])value)[i] += ((double[])obj.value)[i];
-                }
-            }
-        }
-
-        public void average (int count) {
-            if (value instanceof Integer) {
-                value = (int)((Integer)value / count);
-            } else if (value instanceof Float) {
-                value = (Float)value / count;
-            } else if (value instanceof Double) {
-                value = (Double)value / count;
-            } else if (value instanceof int[]) {
-                for (int i = 0; i < ((int[])value).length; i++) {
-                    ((int[])value)[i] = (int)(((int[])value)[i] / count);
-                }
-            } else if (value instanceof float[]) {
-                for (int i = 0; i < ((float[])value).length; i++) {
-                    ((float[])value)[i] = ((float[])value)[i] / count;
-                }
-            } else if (value instanceof double[]) {
-                for (int i = 0; i < ((double[])value).length; i++) {
-                    ((double[])value)[i] = ((double[])value)[i] / count;
-                }
-            } else if (value instanceof JSONArray) {
-                return; // good JSONArray is translated into double[]
-            } else if (value instanceof byte[]) {
-                return;	// don't accumulate byte[]
-            } else if (value instanceof String) {
-                return;	// don't know now to accumulate String
-            } else if (value instanceof JSONObject) {
-                return;	// don't know now to accumulate JSONObject
-            }
-        }
     }
 
     // ************** //
     // * Public API * //
     // ************** //
+
+    static public class ODFObject {
+		// data part
+    	public String timestamp;
+        public JSONArray data;
+        
+        // event part
+        public EventTag event_tag;
+        public String message;
+
+        public ODFObject (EventTag event_tag, String message) {
+        	this.timestamp = null;
+            this.data = null;
+            this.event_tag = event_tag;
+            this.message = message;
+        }
+
+        public ODFObject (String timestamp, JSONArray data) {
+        	this.timestamp = timestamp;
+            this.data = data;
+            this.event_tag = null;
+            this.message = null;
+        }
+    }
+
+    static public abstract class Subscriber {
+        public abstract void odf_handler (String feature, ODFObject odf_object);
+    }
+    
+    static abstract public class Reducer {
+        abstract public JSONArray reduce (JSONArray a, JSONArray b, int index, int last_index);
+        
+        static public final Reducer LAST = new Reducer () {
+            @Override
+            public JSONArray reduce(JSONArray a, JSONArray b, int index, int last_index) {
+                return b;
+            }
+        };
+    }
+    
     static public void init (String log_tag) {
         DAN.log_tag = log_tag;
         CSMAPI.set_logtag(log_tag);
@@ -775,28 +645,67 @@ public class DAN {
             }
         }
 
-        SessionThread.instance().connect(ec_endpoint);
+        SessionThread.instance().register(ec_endpoint);
     }
     
     static public void reregister (String ec_endpoint) {
     	logging("reregister(%s)", ec_endpoint);
-        SessionThread.instance().disconnect();
-        SessionThread.instance().connect(ec_endpoint);
+        SessionThread.instance().deregister();
+        SessionThread.instance().register(ec_endpoint);
     }
 
-    static public void push (String feature, Object data) {
-        DANDataObject ary = new DANDataObject(data);
+    static public void push (String feature, double[] data) {
+        push(feature, data, Reducer.LAST);
+    }
+
+    static public void push (String feature, double[] data, Reducer reducer) {
+        JSONArray tmp = new JSONArray();
+        for (int i = 0; i < data.length; i++) {
+            tmp.put(data[i]);
+        }
+        push(feature, tmp, reducer);
+    }
+
+    static public void push (String feature, float[] data) {
+        push(feature, data, Reducer.LAST);
+    }
+
+    static public void push (String feature, float[] data, Reducer reducer) {
+        JSONArray tmp = new JSONArray();
+        for (int i = 0; i < data.length; i++) {
+            tmp.put(data[i]);
+        }
+        push(feature, tmp, reducer);
+    }
+
+    static public void push (String feature, int[] data) {
+        push(feature, data, Reducer.LAST);
+    }
+    
+    static public void push (String feature, int[] data, Reducer reducer) {
+        JSONArray tmp = new JSONArray();
+        for (int i = 0; i < data.length; i++) {
+            tmp.put(data[i]);
+        }
+        push(feature, tmp, reducer);
+    }
+    
+    static public void push (String feature, JSONArray data) {
+        push(feature, data, Reducer.LAST);
+    }
+    
+    static public void push (String feature, JSONArray data, Reducer reducer) {
         if (!upstream_thread_pool.containsKey(feature)) {
             UpStreamThread ust = new UpStreamThread(feature);
             upstream_thread_pool.put(feature, ust);
             ust.start();
         }
         UpStreamThread ust = upstream_thread_pool.get(feature);
-        ust.enqueue(ary);
+        ust.enqueue(data, reducer);
     }
 
     static public void subscribe (String feature, Subscriber subscriber) {
-        if (feature.equals(NAME_CONTROL_CHANNEL)) {
+        if (feature.equals(CONTROL_CHANNEL)) {
         	synchronized (event_subscribers) {
         		event_subscribers.add(subscriber);
         	}
@@ -824,7 +733,7 @@ public class DAN {
     }
 
     static public void deregister () {
-        SessionThread.instance().disconnect();
+        SessionThread.instance().deregister();
     }
     
     static public void shutdown () {
@@ -892,6 +801,6 @@ public class DAN {
     }
     
     static public boolean session_status () {
-    	return SessionThread.status();
+        return SessionThread.status();
     }
 }
