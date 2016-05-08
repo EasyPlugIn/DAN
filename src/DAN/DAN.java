@@ -26,7 +26,7 @@ public class DAN {
     // * Constants * //
     // ************* //
 	
-    static public final String version = "20160428";
+    static public final String version = "20160508";
     static public final String CONTROL_CHANNEL = "Control_channel";
     
     
@@ -41,7 +41,7 @@ public class DAN {
     static public  final int EC_BROADCAST_PORT = 17000;
     static private final Long HEART_BEAT_DEAD_MILLISECOND = 3000l;
 
-    static public enum EventTag {
+    static public enum Event {
         FOUND_NEW_EC,
         REGISTER_FAILED,
         REGISTER_SUCCEED,
@@ -71,28 +71,28 @@ public class DAN {
     // *********** //
 
     /*
-     * SearchLANECThread searches EC in the same LAN by receiving UDP broadcast packets
+     * SearchECThread searches EC in the same LAN by receiving UDP broadcast packets
      * 
-     * SearchLANECThread is a Thread singleton class
-     * SearchLANECThread.instance() returns the singleton instance
+     * SearchECThread is a Thread singleton class
+     * SearchECThread.instance() returns the singleton instance
      * 		The instance is created AND RUN after first call
      * 
-     * SearchLANECThread.kill() stops the thread and cleans the singleton instance
+     * SearchECThread.kill() stops the thread and cleans the singleton instance
      */
-    static private class SearchLANECThread extends Thread {
-        static private SearchLANECThread self = null;
+    static private class SearchECThread extends Thread {
+        static private SearchECThread self = null;
         static private final Semaphore instance_lock = new Semaphore(1);
         
         private DatagramSocket socket;
         
-        private SearchLANECThread () {}
+        private SearchECThread () {}
         
-        static public SearchLANECThread instance () {
+        static public SearchECThread instance () {
         	try {
 				instance_lock.acquire();
 	        	if (self == null) {
-	                logging("SearchLANECThread.instance(): create instance");
-	        		self = new SearchLANECThread();
+	                logging("SearchECThread.instance(): create instance");
+	        		self = new SearchECThread();
 	        	}
 	        	instance_lock.release();
 			} catch (InterruptedException e) {
@@ -102,11 +102,11 @@ public class DAN {
         }
 
         public void kill () {
-            logging("SearchLANECThread.kill()");
+            logging("SearchECThread.kill()");
 			try {
 				instance_lock.acquire();
 	            if (self == null) {
-	            	logging("SearchLANECThread.kill(): not running, skip");
+	            	logging("SearchECThread.kill(): not running, skip");
 	                return;
 	            }
 	            self.socket.close();
@@ -117,9 +117,9 @@ public class DAN {
 				}
 	            self = null;
 	        	instance_lock.release();
-	        	logging("SearchLANECThread.kill(): singleton cleaned");
+	        	logging("SearchECThread.kill(): singleton cleaned");
 			} catch (InterruptedException e1) {
-	        	logging("SearchLANECThread.kill(): InterruptedException");
+	        	logging("SearchECThread.kill(): InterruptedException");
 			}
         }
 
@@ -140,17 +140,14 @@ public class DAN {
                         synchronized (detected_ec_heartbeat) {
                             if (!detected_ec_heartbeat.containsKey(ec_endpoint)) {
                 	            logging("FOUND_NEW_EC: %s", ec_endpoint);
-                	            broadcast_control_message(EventTag.FOUND_NEW_EC, ec_endpoint);
+                	            broadcast_control_message(Event.FOUND_NEW_EC, ec_endpoint);
                             }
             	            detected_ec_heartbeat.put(ec_endpoint, System.currentTimeMillis());
 						}
                     }
                 }
-//            } catch (SocketException e) {
-//                logging("SearchLANECThread: SocketException");
-//                e.printStackTrace();
             } catch (IOException e) {
-                logging("SearchLANECThread: IOException");
+                logging("SearchECThread: IOException");
             }
         }
     }
@@ -265,10 +262,10 @@ public class DAN {
 			        		}
 			        		
 			        		if (session_status) {
-		                    	broadcast_control_message(EventTag.REGISTER_SUCCEED, CSMAPI.ENDPOINT);
+		                    	broadcast_control_message(Event.REGISTER_SUCCEED, CSMAPI.ENDPOINT);
 			        		} else {
 			        			logging("SessionThread.run(): REGISTER: Give up");
-		                    	broadcast_control_message(EventTag.REGISTER_FAILED, CSMAPI.ENDPOINT);
+		                    	broadcast_control_message(Event.REGISTER_FAILED, CSMAPI.ENDPOINT);
 			        		}
 						}
 						break;
@@ -294,10 +291,10 @@ public class DAN {
 			        		}
 
 			        		if (deregister_success) {
-		                    	broadcast_control_message(EventTag.DEREGISTER_SUCCEED, CSMAPI.ENDPOINT);
+		                    	broadcast_control_message(Event.DEREGISTER_SUCCEED, CSMAPI.ENDPOINT);
 			        		} else {
 			        			logging("SessionThread.run(): DEREGISTER: Give up");
-		                    	broadcast_control_message(EventTag.DEREGISTER_FAILED, CSMAPI.ENDPOINT);
+		                    	broadcast_control_message(Event.DEREGISTER_FAILED, CSMAPI.ENDPOINT);
 			        		}
 			        		// No matter what result is,
 			        		//  set session_status to false because I've already retry <RETRY_COUNT> times
@@ -418,10 +415,10 @@ public class DAN {
                         logging("UpStreamThread(%s).run(): push %s", feature, data.toString());
                         try {
 							CSMAPI.push(d_id, feature, data);
-							broadcast_control_message(EventTag.PUSH_SUCCEED, feature);
+							broadcast_control_message(Event.PUSH_SUCCEED, feature);
 						} catch (CSMError e) {
 							logging("UpStreamThread(%s).run(): CSMError", feature);
-							broadcast_control_message(EventTag.PUSH_FAILED, feature);
+							broadcast_control_message(Event.PUSH_FAILED, feature);
 						}
                     } else {
                         logging("UpStreamThread(%s).run(): skip. (ec_status == false)", feature);
@@ -484,7 +481,7 @@ public class DAN {
                     logging("DownStreamThread(%s).run(): InterruptedException", feature);
                 } catch (CSMError e) {
                     logging("DownStreamThread(%s).run(): CSMError", feature);
-					broadcast_control_message(EventTag.PULL_FAILED, feature);
+					broadcast_control_message(Event.PULL_FAILED, feature);
 				}
             }
             logging("DownStreamThread(%s) ends", feature);
@@ -535,7 +532,7 @@ public class DAN {
         System.out.printf("[%s][%s] %s%n", log_tag, dan_log_tag, message);
     }
 
-    static private void broadcast_control_message (EventTag event, String message) {
+    static private void broadcast_control_message (Event event, String message) {
         logging("broadcast_control_message()");
     	synchronized (event_subscribers) {
             for (Subscriber handler: event_subscribers) {
@@ -554,20 +551,20 @@ public class DAN {
         public JSONArray data;
         
         // event part
-        public EventTag event_tag;
+        public Event event;
         public String message;
 
-        public ODFObject (EventTag event_tag, String message) {
+        public ODFObject (Event event, String message) {
         	this.timestamp = null;
             this.data = null;
-            this.event_tag = event_tag;
+            this.event = event;
             this.message = message;
         }
 
         public ODFObject (String timestamp, JSONArray data) {
         	this.timestamp = timestamp;
             this.data = data;
-            this.event_tag = null;
+            this.event = null;
             this.message = null;
         }
     }
@@ -587,7 +584,7 @@ public class DAN {
         };
     }
     
-    static public void init (String log_tag) {
+    static public void init (String log_tag, Subscriber init_subscriber) {
         DAN.log_tag = log_tag;
         CSMAPI.set_logtag(log_tag);
         
@@ -596,12 +593,14 @@ public class DAN {
         	logging("init(): Already initialized");
         	return;
         }
-        SearchLANECThread.instance().start();
+        SearchECThread.instance().start();
         SessionThread.instance().start();
         
         CSMAPI.ENDPOINT = DEFAULT_EC_HOST;
         DAN.request_interval = 150;
 
+        event_subscribers.clear();
+        event_subscribers.add(init_subscriber);
         upstream_thread_pool.clear();
         downstream_thread_pool.clear();
         synchronized (detected_ec_heartbeat) {
@@ -765,7 +764,7 @@ public class DAN {
         }
 		downstream_thread_pool.clear();
 		
-    	SearchLANECThread.instance().kill();
+    	SearchECThread.instance().kill();
     	SessionThread.instance().kill();
     	initialized = false;
     }
