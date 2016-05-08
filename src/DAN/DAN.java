@@ -26,7 +26,7 @@ public class DAN {
     // * Constants * //
     // ************* //
 	
-    static public final String version = "20160508";
+    static public final String version = "20160508a";
     static public final String CONTROL_CHANNEL = "Control_channel";
     
     
@@ -584,10 +584,12 @@ public class DAN {
         };
     }
     
-    static public void init (String log_tag, Subscriber init_subscriber) {
+    static public void set_log_tag (String log_tag) {
         DAN.log_tag = log_tag;
-        CSMAPI.set_logtag(log_tag);
-        
+        CSMAPI.set_log_tag(log_tag);
+    }
+    
+    static public void init (Subscriber init_subscriber) {
         logging("init()");
         if (initialized) {
         	logging("init(): Already initialized");
@@ -597,7 +599,7 @@ public class DAN {
         SessionThread.instance().start();
         
         CSMAPI.ENDPOINT = DEFAULT_EC_HOST;
-        DAN.request_interval = 150;
+        set_request_interval(150);
 
         event_subscribers.clear();
         event_subscribers.add(init_subscriber);
