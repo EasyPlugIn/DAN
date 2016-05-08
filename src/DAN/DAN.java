@@ -26,7 +26,7 @@ public class DAN {
     // * Constants * //
     // ************* //
 	
-    static public final String version = "20160508a";
+    static public final String version = "20160508b";
     static public final String CONTROL_CHANNEL = "Control_channel";
     
     
@@ -400,13 +400,13 @@ public class DAN {
 
                     JSONArray acc = queue.take();
                     int count = queue.size();
-                    for (int i = 0; i < count; i++) {
+                    for (int i = 1; i <= count; i++) {
                         JSONArray tmp = queue.take();
                         if (!working_permission) {
                             logging("UpStreamThread(%s).run(): droped", feature);
                             return;
                         }
-                        acc = reducer.reduce(acc, tmp, i, count - 1);
+                        acc = reducer.reduce(acc, tmp, i, count);
                     }
 
                     JSONObject data = new JSONObject();
@@ -574,11 +574,11 @@ public class DAN {
     }
     
     static abstract public class Reducer {
-        abstract public JSONArray reduce (JSONArray a, JSONArray b, int index, int last_index);
+        abstract public JSONArray reduce (JSONArray a, JSONArray b, int b_index, int last_index);
         
         static public final Reducer LAST = new Reducer () {
             @Override
-            public JSONArray reduce(JSONArray a, JSONArray b, int index, int last_index) {
+            public JSONArray reduce(JSONArray a, JSONArray b, int b_index, int last_index) {
                 return b;
             }
         };
