@@ -26,7 +26,7 @@ public class DAN {
     // * Constants * //
     // ************* //
 	
-    static public final String version = "20160508b";
+    static public final String version = "20160509";
     static public final String CONTROL_CHANNEL = "Control_channel";
     
     
@@ -62,6 +62,7 @@ public class DAN {
     static private JSONObject profile;
     static private final ConcurrentHashMap<String, UpStreamThread> upstream_thread_pool = new ConcurrentHashMap<String, UpStreamThread>();
     static private final ConcurrentHashMap<String, DownStreamThread> downstream_thread_pool = new ConcurrentHashMap<String, DownStreamThread>();
+    // LinkedHashMap is ordered-map
     static private final Map<String, Long> detected_ec_heartbeat = Collections.synchronizedMap(new LinkedHashMap<String, Long>());
     static private boolean initialized;
 
@@ -360,7 +361,7 @@ public class DAN {
             this.reducer = Reducer.LAST;
         }
 
-        public void stop_working () {
+        public void kill () {
             working_permission = false;
             this.interrupt();
         }
@@ -443,8 +444,12 @@ public class DAN {
             this.subscriber = callback;
             this.timestamp = 0;
         }
+        
+        public boolean has_subscriber (Subscriber subscriber) {
+            return this.subscriber.equals(subscriber);
+        }
 
-        public void stop_working () {
+        public void kill () {
             working_permission = false;
             this.interrupt();
         }
@@ -601,8 +606,10 @@ public class DAN {
         CSMAPI.ENDPOINT = DEFAULT_EC_HOST;
         set_request_interval(150);
 
-        event_subscribers.clear();
-        event_subscribers.add(init_subscriber);
+        synchronized (event_subscribers) {
+            event_subscribers.clear();
+            event_subscribers.add(init_subscriber);
+        }
         upstream_thread_pool.clear();
         downstream_thread_pool.clear();
         synchronized (detected_ec_heartbeat) {
@@ -720,17 +727,44 @@ public class DAN {
     }
 
     static public void unsubscribe (String feature) {
-        DownStreamThread dst = downstream_thread_pool.get(feature);
-        if (dst != null) {
-            dst.stop_working();
+        if (feature.equals(CONTROL_CHANNEL)) {
+            synchronized (event_subscribers) {
+                event_subscribers.clear();
+            }
+        } else {
+            DownStreamThread down_stream_thread = downstream_thread_pool.get(feature);
+            if (down_stream_thread == null) {
+                return;
+            }
+            down_stream_thread.kill();
+            try {
+                down_stream_thread.join();
+            } catch (InterruptedException e) {
+                logging("unsubscribe(): DownStreamThread: InterruptedException");
+            }
             downstream_thread_pool.remove(feature);
         }
     }
 
-    static public void unsubcribe (Subscriber handler) {
+    static public void unsubscribe (Subscriber subscriber) {
     	synchronized (event_subscribers) {
-    		event_subscribers.remove(handler);
+    		event_subscribers.remove(subscriber);
     	}
+
+        for (Map.Entry<String, DownStreamThread> p: downstream_thread_pool.entrySet()) {
+            String feature = p.getKey();
+            DownStreamThread down_stream_thread = p.getValue();
+            if (down_stream_thread.has_subscriber(subscriber)) {
+                down_stream_thread.kill();
+                try {
+                    down_stream_thread.join();
+                } catch (InterruptedException e) {
+                    logging("unsubscribe(): DownStreamThread: InterruptedException");
+                }
+                downstream_thread_pool.remove(feature);
+                break;
+            }
+        }
     }
 
     static public void deregister () {
@@ -746,7 +780,7 @@ public class DAN {
         
 		for (Map.Entry<String, UpStreamThread> p: upstream_thread_pool.entrySet()) {
             UpStreamThread t = p.getValue();
-            t.stop_working();
+            t.kill();
             try {
 				t.join();
 			} catch (InterruptedException e) {
@@ -757,7 +791,7 @@ public class DAN {
 
 		for (Map.Entry<String, DownStreamThread> p: downstream_thread_pool.entrySet()) {
             DownStreamThread t = p.getValue();
-            t.stop_working();
+            t.kill();
             try {
 				t.join();
 			} catch (InterruptedException e) {
