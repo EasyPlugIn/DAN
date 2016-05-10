@@ -26,7 +26,7 @@ public class DAN {
     // * Constants * //
     // ************* //
 	
-    static public final String version = "20160509";
+    static public final String version = "20160510";
     static public final String CONTROL_CHANNEL = "Control_channel";
     
     
@@ -381,15 +381,6 @@ public class DAN {
 
         public void run () {
             logging("UpStreamThread(%s) starts", feature);
-            try {
-                if (!json_array_has_string(DAN.profile.getJSONArray("df_list"), feature)) {
-                    logging("UpStreamThread(%s).run(): feature not exists, exit", feature);
-                    return;
-                }
-            } catch (JSONException e1) {
-                logging("UpStreamThread(%s).run(): JSONException", feature);
-                return;
-            }
             working_permission = true;
             while (working_permission) {
                 try {
@@ -456,15 +447,6 @@ public class DAN {
 
         public void run () {
             logging("DownStreamThread(%s) starts", feature);
-            try {
-                if (!json_array_has_string(DAN.profile.getJSONArray("df_list"), feature)) {
-                    logging("DownStreamThread(%s).run(): feature not exists, exit", feature);
-                    return;
-                }
-            } catch (JSONException e1) {
-                logging("DownStreamThread(%s).run(): JSONException", feature);
-                return;
-            }
             working_permission = true;
             data_timestamp = "";
             while (working_permission) {
@@ -516,14 +498,11 @@ public class DAN {
     // * Internal Helper Functions * //
     // ***************************** //
 
-    static private boolean json_array_has_string (JSONArray json_array, String str) {
-        for (int i = 0; i < json_array.length(); i++) {
-            try {
-                if (json_array.getString(i).equals(str)) {
-                    return true;
-                }
-            } catch (JSONException e) {
-                logging("json_array_has_string(): JSONException");
+    static private boolean device_feature_exists (String feature) {
+        JSONArray df_list = profile.getJSONArray("df_list");
+        for (int i = 0; i < df_list.length(); i++) {
+            if (df_list.getString(i).equals(feature)) {
+                return true;
             }
         }
         return false;
@@ -703,6 +682,10 @@ public class DAN {
     }
     
     static public void push (String feature, JSONArray data, Reducer reducer) {
+        if (!device_feature_exists(feature)) {
+            logging("push(%s): feature not exists", feature);
+            return;
+        }
         if (!upstream_thread_pool.containsKey(feature)) {
             UpStreamThread ust = new UpStreamThread(feature);
             upstream_thread_pool.put(feature, ust);
@@ -718,6 +701,10 @@ public class DAN {
         		event_subscribers.add(subscriber);
         	}
         } else {
+            if (!device_feature_exists(feature)) {
+                logging("subscribe(%s): feature not exists", feature);
+                return;
+            }
             if (!downstream_thread_pool.containsKey(feature)) {
                 DownStreamThread dst = new DownStreamThread(feature, subscriber);
                 downstream_thread_pool.put(feature, dst);
