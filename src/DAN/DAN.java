@@ -390,7 +390,7 @@ public class DAN {
                     }
                     timestamp = System.currentTimeMillis();
 
-                    JSONArray acc = queue.take();
+                    JSONArray data = queue.take();
                     int count = queue.size();
                     for (int i = 1; i <= count; i++) {
                         JSONArray tmp = queue.take();
@@ -398,11 +398,9 @@ public class DAN {
                             logging("UpStreamThread(%s).run(): droped", feature);
                             return;
                         }
-                        acc = reducer.reduce(acc, tmp, i, count);
+                        data = reducer.reduce(data, tmp, i, count);
                     }
-
-                    JSONObject data = new JSONObject();
-                    data.put("data", acc);
+                    
                     if (SessionThread.status()) {
                         logging("UpStreamThread(%s).run(): push %s", feature, data.toString());
                         try {
