@@ -31,9 +31,10 @@ public class DAN {
     static private String log_tag = "DAN";
     static private final String dan_log_tag = "DAN";
     static private final String DEFAULT_EC_HOST = "http://openmtc.darkgerm.com:9999";
-    static public final int EC_BROADCAST_PORT = 17000;
+    static private final int EC_BROADCAST_PORT = 17000;
     static private final Long HEART_BEAT_DEAD_MILLISECOND = 3000l;
     static private long request_interval = 150;
+    static private boolean initialized;
     
 
     // ****************** //
@@ -200,25 +201,25 @@ public class DAN {
         static private final int RETRY_INTERVAL = 2000;
         static private final Semaphore instance_lock = new Semaphore(1);
         static private SessionThread self;
-
         private boolean session_status;
+        
+        static private class SessionCommand {
+            private enum Action {
+                REGISTER, DEREGISTER
+            }
+            
+            public Action action;
+            public String ec_endpoint;
+            public SessionCommand (Action op_code, String ec_endpoint) {
+                this.action = op_code;
+                this.ec_endpoint = ec_endpoint;
+            }
+        }
+
         private final LinkedBlockingQueue<SessionCommand> command_channel =
                 new LinkedBlockingQueue<SessionCommand>();
         private final LinkedBlockingQueue<Integer> response_channel =
                 new LinkedBlockingQueue<Integer>();
-        
-        private enum CommandOpCode {
-            REGISTER, DEREGISTER
-        }
-        
-        private class SessionCommand {
-            public CommandOpCode op_code;
-            public String ec_endpoint;
-            public SessionCommand (CommandOpCode op_code, String ec_endpoint) {
-                this.op_code = op_code;
-                this.ec_endpoint = ec_endpoint;
-            }
-        }
         
         private SessionThread () {}
         
@@ -238,7 +239,7 @@ public class DAN {
         
         public void register (String ec_endpoint) {
             logging("SessionThread.connect(%s)", ec_endpoint);
-            SessionCommand sc = new SessionCommand(CommandOpCode.REGISTER, ec_endpoint);
+            SessionCommand sc = new SessionCommand(SessionCommand.Action.REGISTER, ec_endpoint);
             try {
                 command_channel.add(sc);
             } catch (IllegalStateException e) {
@@ -248,7 +249,7 @@ public class DAN {
         
         public void deregister () {
             logging("SessionThread.disconnect()");
-            SessionCommand sc = new SessionCommand(CommandOpCode.DEREGISTER, "");
+            SessionCommand sc = new SessionCommand(SessionCommand.Action.DEREGISTER, "");
             try {
                 command_channel.add(sc);
                 response_channel.take();
@@ -264,7 +265,7 @@ public class DAN {
             try {
                 while (true) {
                     SessionCommand sc = command_channel.take();
-                    switch (sc.op_code) {
+                    switch (sc.action) {
                     case REGISTER:
                         logging("SessionThread.run(): REGISTER: %s", sc.ec_endpoint);
                         if (session_status && !CSMAPI.ENDPOINT.equals(sc.ec_endpoint)) {
@@ -372,21 +373,13 @@ public class DAN {
     }
 
     static private class UpStreamThread extends Thread {
-        boolean working_permission;
         String feature;
         final LinkedBlockingQueue<JSONArray> queue = new LinkedBlockingQueue<JSONArray>();
-        long timestamp;
         Reducer reducer;
 
         public UpStreamThread (String feature) {
             this.feature = feature;
-            this.timestamp = 0;
             this.reducer = Reducer.LAST;
-        }
-
-        public void kill () {
-            working_permission = false;
-            this.interrupt();
         }
 
         public void enqueue (JSONArray data, Reducer reducer) {
@@ -402,25 +395,20 @@ public class DAN {
             }
         }
 
+        public void kill () {
+            this.interrupt();
+        }
+
         public void run () {
             logging("UpStreamThread(%s) starts", feature);
-            working_permission = true;
-            while (working_permission) {
-                try {
-                    long now = System.currentTimeMillis();
-                    if (now - timestamp < request_interval) {
-                        Thread.sleep(request_interval - (now - timestamp));
-                    }
-                    timestamp = System.currentTimeMillis();
+            try {
+                while (!isInterrupted()) {
+                    Thread.sleep(request_interval);
 
                     JSONArray data = queue.take();
                     int count = queue.size();
                     for (int i = 1; i <= count; i++) {
                         JSONArray tmp = queue.take();
-                        if (!working_permission) {
-                            logging("UpStreamThread(%s).run(): droped", feature);
-                            return;
-                        }
                         data = reducer.reduce(data, tmp, i, count);
                     }
                     
@@ -436,82 +424,74 @@ public class DAN {
                     } else {
                         logging("UpStreamThread(%s).run(): skip. (ec_status == false)", feature);
                     }
-                } catch (InterruptedException e) {
-                    logging("UpStreamThread(%s).run(): InterruptedException", feature);
                 }
+            } catch (InterruptedException e) {
+                logging("UpStreamThread(%s).run(): InterruptedException", feature);
             }
             logging("UpStreamThread(%s) ends", feature);
         }
     }
 
     static private class DownStreamThread extends Thread {
-        boolean working_permission;
         String feature;
         Subscriber subscriber;
-        long timestamp;
-        String data_timestamp;
+        String timestamp;
 
         public DownStreamThread (String feature, Subscriber callback) {
             this.feature = feature;
             this.subscriber = callback;
-            this.timestamp = 0;
+            this.timestamp = "";
         }
         
         public boolean has_subscriber (Subscriber subscriber) {
             return this.subscriber.equals(subscriber);
         }
 
+        private void deliver_data (JSONArray dataset) throws JSONException {
+            logging("DownStreamThread(%s).deliver_data(): %s", feature, dataset.toString());
+            if (dataset.length() == 0) {
+                logging("DownStreamThread(%s).deliver_data(): No any data", feature);
+                return;
+            }
+            
+            String new_timestamp = dataset.getJSONArray(0).getString(0);
+            JSONArray new_data = dataset.getJSONArray(0).getJSONArray(1);
+            if (new_timestamp.equals(timestamp)) {
+                logging("DownStreamThread(%s).deliver_data(): No new data", feature);
+                return;
+            }
+            
+            timestamp = new_timestamp;
+            subscriber.odf_handler(feature, new ODFObject(new_timestamp, new_data));
+        }
+
         public void kill () {
-            working_permission = false;
             this.interrupt();
         }
 
         public void run () {
             logging("DownStreamThread(%s) starts", feature);
-            working_permission = true;
-            data_timestamp = "";
-            while (working_permission) {
-                try {
-                    long now = System.currentTimeMillis();
-                    if (now - timestamp < request_interval) {
-                        Thread.sleep(request_interval - (now - timestamp));
+            try {
+                while (!isInterrupted()) {
+                    try{
+                        Thread.sleep(request_interval);
+                        if (SessionThread.status()) {
+                            logging("DownStreamThread(%s).run(): pull", feature);
+                            deliver_data(CSMAPI.pull(d_id, feature));
+                        } else {
+                            logging("DownStreamThread(%s).run(): skip. (ec_status == false)", feature);
+                        }
+                    } catch (JSONException e) {
+                        logging("DownStreamThread(%s).run(): JSONException", feature);
+                    } catch (CSMError e) {
+                        logging("DownStreamThread(%s).run(): CSMError", feature);
+                        broadcast_event(Event.PULL_FAILED, feature);
                     }
-                    timestamp = System.currentTimeMillis();
-                    if (SessionThread.status()) {
-                        logging("DownStreamThread(%s).run(): pull", feature);
-                        deliver_data(CSMAPI.pull(d_id, feature));
-                    } else {
-                        logging("DownStreamThread(%s).run(): skip. (ec_status == false)", feature);
-                    }
-                } catch (JSONException e) {
-                    logging("DownStreamThread(%s).run(): JSONException", feature);
-                } catch (InterruptedException e) {
-                    logging("DownStreamThread(%s).run(): InterruptedException", feature);
-                } catch (CSMError e) {
-                    logging("DownStreamThread(%s).run(): CSMError", feature);
-                    broadcast_event(Event.PULL_FAILED, feature);
                 }
+            } catch (InterruptedException e) {
+                logging("DownStreamThread(%s).run(): InterruptedException", feature);
             }
             logging("DownStreamThread(%s) ends", feature);
-        }
-
-        private void deliver_data (JSONArray data) throws JSONException {
-            logging("DownStreamThread(%s).deliver_data(): %s", feature, data.toString());
-            if (data.length() == 0) {
-                logging("DownStreamThread(%s).deliver_data(): No any data", feature);
-                return;
-            }
-            
-            JSONArray newest = data.getJSONArray(0);
-            String newest_timestamp = newest.getString(0);
-            JSONArray newest_data = newest.getJSONArray(1);
-            if (newest_timestamp.equals(data_timestamp)) {
-                logging("DownStreamThread(%s).deliver_data(): No new data", feature);
-                return;
-            }
-            
-            data_timestamp = newest_timestamp;
-            subscriber.odf_handler(feature, new ODFObject(newest_timestamp, newest_data));
         }
     }
     
@@ -526,7 +506,6 @@ public class DAN {
     static private final ConcurrentHashMap<String, DownStreamThread> downstream_thread_pool = new ConcurrentHashMap<String, DownStreamThread>();
     // LinkedHashMap is ordered-map
     static private final Map<String, Long> detected_ec_heartbeat = Collections.synchronizedMap(new LinkedHashMap<String, Long>());
-    static private boolean initialized;
     
 
     // ************** //
