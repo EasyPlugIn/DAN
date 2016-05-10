@@ -141,7 +141,7 @@ public class DAN {
                         synchronized (detected_ec_heartbeat) {
                             if (!detected_ec_heartbeat.containsKey(ec_endpoint)) {
                 	            logging("FOUND_NEW_EC: %s", ec_endpoint);
-                	            broadcast_control_message(Event.FOUND_NEW_EC, ec_endpoint);
+                	            broadcast_event(Event.FOUND_NEW_EC, ec_endpoint);
                             }
             	            detected_ec_heartbeat.put(ec_endpoint, System.currentTimeMillis());
 						}
@@ -263,10 +263,10 @@ public class DAN {
 			        		}
 			        		
 			        		if (session_status) {
-		                    	broadcast_control_message(Event.REGISTER_SUCCEED, CSMAPI.ENDPOINT);
+		                    	broadcast_event(Event.REGISTER_SUCCEED, CSMAPI.ENDPOINT);
 			        		} else {
 			        			logging("SessionThread.run(): REGISTER: Give up");
-		                    	broadcast_control_message(Event.REGISTER_FAILED, CSMAPI.ENDPOINT);
+		                    	broadcast_event(Event.REGISTER_FAILED, CSMAPI.ENDPOINT);
 			        		}
 						}
 						break;
@@ -292,10 +292,10 @@ public class DAN {
 			        		}
 
 			        		if (deregister_success) {
-		                    	broadcast_control_message(Event.DEREGISTER_SUCCEED, CSMAPI.ENDPOINT);
+		                    	broadcast_event(Event.DEREGISTER_SUCCEED, CSMAPI.ENDPOINT);
 			        		} else {
 			        			logging("SessionThread.run(): DEREGISTER: Give up");
-		                    	broadcast_control_message(Event.DEREGISTER_FAILED, CSMAPI.ENDPOINT);
+		                    	broadcast_event(Event.DEREGISTER_FAILED, CSMAPI.ENDPOINT);
 			        		}
 			        		// No matter what result is,
 			        		//  set session_status to false because I've already retry <RETRY_COUNT> times
@@ -407,10 +407,10 @@ public class DAN {
                         logging("UpStreamThread(%s).run(): push %s", feature, data.toString());
                         try {
 							CSMAPI.push(d_id, feature, data);
-							broadcast_control_message(Event.PUSH_SUCCEED, feature);
+							broadcast_event(Event.PUSH_SUCCEED, feature);
 						} catch (CSMError e) {
 							logging("UpStreamThread(%s).run(): CSMError", feature);
-							broadcast_control_message(Event.PUSH_FAILED, feature);
+							broadcast_event(Event.PUSH_FAILED, feature);
 						}
                     } else {
                         logging("UpStreamThread(%s).run(): skip. (ec_status == false)", feature);
@@ -468,7 +468,7 @@ public class DAN {
                     logging("DownStreamThread(%s).run(): InterruptedException", feature);
                 } catch (CSMError e) {
                     logging("DownStreamThread(%s).run(): CSMError", feature);
-					broadcast_control_message(Event.PULL_FAILED, feature);
+					broadcast_event(Event.PULL_FAILED, feature);
 				}
             }
             logging("DownStreamThread(%s) ends", feature);
@@ -516,7 +516,7 @@ public class DAN {
         System.out.printf("[%s][%s] %s%n", log_tag, dan_log_tag, message);
     }
 
-    static private void broadcast_control_message (Event event, String message) {
+    static private void broadcast_event (Event event, String message) {
         logging("broadcast_control_message()");
     	synchronized (event_subscribers) {
             for (Subscriber handler: event_subscribers) {
