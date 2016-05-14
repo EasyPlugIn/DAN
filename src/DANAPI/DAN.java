@@ -1,4 +1,4 @@
-package DAN;
+package DANAPI;
 import java.io.IOException;
 import java.net.DatagramPacket;
 import java.net.DatagramSocket;
@@ -12,7 +12,6 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.LinkedBlockingQueue;
-import java.util.concurrent.Semaphore;
 
 import org.json.JSONArray;
 import org.json.JSONException;
@@ -21,74 +20,17 @@ import org.json.JSONObject;
 import CSMAPI.CSMAPI;
 import CSMAPI.CSMAPI.CSMError;
 
-public class DAN {
-    
+public class DAN implements DANAPI {
     // ************************************************ //
     // * Constants or Semi-constants (Seldom changed) * //
     // ************************************************ //
-    static public final String version = "20160510";
-    static public final String CONTROL_CHANNEL = "Control_channel";
-    static private String log_tag = "DAN";
-    static private final String dan_log_tag = "DAN";
-    static private final String DEFAULT_EC_HOST = "http://openmtc.darkgerm.com:9999";
-    static private final int EC_BROADCAST_PORT = 17000;
-    static private final Long HEART_BEAT_DEAD_MILLISECOND = 3000l;
-    static private long request_interval = 150;
-    static private boolean initialized;
-    
-
-    // ****************** //
-    // * Public classes * //
-    // ****************** //
-    static public enum Event {
-        FOUND_NEW_EC,
-        REGISTER_FAILED,
-        REGISTER_SUCCEED,
-        PUSH_FAILED,
-        PUSH_SUCCEED,
-        PULL_FAILED,
-        DEREGISTER_FAILED,
-        DEREGISTER_SUCCEED,
-    };
-    
-    static public class ODFObject {
-        // data part
-        public String timestamp;
-        public JSONArray data;
-        
-        // event part
-        public Event event;
-        public String message;
-
-        public ODFObject (Event event, String message) {
-            this.timestamp = null;
-            this.data = null;
-            this.event = event;
-            this.message = message;
-        }
-
-        public ODFObject (String timestamp, JSONArray data) {
-            this.timestamp = timestamp;
-            this.data = data;
-            this.event = null;
-            this.message = null;
-        }
-    }
-
-    static public interface Subscriber {
-        void odf_handler (String feature, ODFObject odf_object);
-    }
-    
-    static abstract public class Reducer {
-        abstract public JSONArray reduce (JSONArray a, JSONArray b, int b_index, int last_index);
-        
-        static public final Reducer LAST = new Reducer () {
-            @Override
-            public JSONArray reduce(JSONArray a, JSONArray b, int b_index, int last_index) {
-                return b;
-            }
-        };
-    }
+    private final String VERSION = "20160514";
+    private String log_tag = "DAN";
+    private final String dan_log_tag = "DAN";
+    private final String DEFAULT_EC_HOST = "http://openmtc.darkgerm.com:9999";
+    private final int EC_BROADCAST_PORT = 17000;
+    private final Long HEART_BEAT_DEAD_MILLISECOND = 3000l;
+    private long request_interval = 150;
     
 
     // ******************* //
@@ -98,61 +40,27 @@ public class DAN {
     /*
      * SearchECThread searches EC in the same LAN by receiving UDP broadcast packets
      * 
-     * SearchECThread is a Thread singleton class
-     * SearchECThread.instance() returns the singleton instance
-     *      The instance is created AND RUN after first call
-     * 
-     * SearchECThread.kill() stops the thread and cleans the singleton instance
+     * SearchECThread.kill() stops the thread
      */
-    static private class SearchECThread extends Thread {
-        static private SearchECThread self = null;
-        static private final Semaphore instance_lock = new Semaphore(1);
-        
+    private class SearchECThread extends Thread {
         private DatagramSocket socket;
-        
-        private SearchECThread () {}
-        
-        static public SearchECThread instance () {
-            try {
-                instance_lock.acquire();
-                if (self == null) {
-                    logging("SearchECThread.instance(): create instance");
-                    self = new SearchECThread();
-                }
-                instance_lock.release();
-            } catch (InterruptedException e) {
-                e.printStackTrace();
-            }
-            return self;
-        }
 
         public void kill () {
             logging("SearchECThread.kill()");
+            socket.close();
             try {
-                instance_lock.acquire();
-                if (self == null) {
-                    logging("SearchECThread.kill(): not running, skip");
-                    return;
-                }
-                self.socket.close();
-                try {
-                    self.join();
-                } catch (InterruptedException e) {
-                    e.printStackTrace();
-                }
-                self = null;
-                instance_lock.release();
-                logging("SearchECThread.kill(): singleton cleaned");
-            } catch (InterruptedException e1) {
+                this.join();
+            } catch (InterruptedException e) {
                 logging("SearchECThread.kill(): InterruptedException");
             }
+            logging("SearchECThread.kill(): killed");
         }
 
         public void run () {
             try {
                 socket = new DatagramSocket(null);
                 socket.setReuseAddress(true);
-                socket.bind(new InetSocketAddress("0.0.0.0", DAN.EC_BROADCAST_PORT));
+                socket.bind(new InetSocketAddress("0.0.0.0", EC_BROADCAST_PORT));
                 byte[] lmessage = new byte[20];
                 DatagramPacket packet = new DatagramPacket(lmessage, lmessage.length);
                 while (true) {
@@ -182,64 +90,38 @@ public class DAN {
      *      ``session_status`` records the status,
      *          and this value SHOULD NOT be true after disconnect() and before connect().
      * 
-     * SessionThread is a Thread singleton class.
-     * SessionThread.instance() returns the singleton instance.
-     *      The instance is created AND RUN after first call
-     * 
      * SessionThread.connect(String) registers to the given EasyConnect host
      *      This method retries 3 times, between each retry it sleeps 2000 milliseconds
-     *      This method is non-blocking, because it notifies subscribers in ``event_subscribers``.
+     *      This method is non-blocking, because it notifies odf_receivers in ``event_odf_receivers``.
      * 
      * SessionThread.disconnect() deregisters from previous connected EasyConnect host
      *      This method retries 3 times, between each retry it sleeps 2000 milliseconds
      *      This method is blocking, because it doesn't generate events. Re-register also needs it to be blocking.
      * 
-     * SessionThread.kill() stops the thread and cleans the singleton instance
+     * SessionThread.kill() stops the thread
      */
-    static private class SessionThread extends Thread {
-        static private final int RETRY_COUNT = 3;
-        static private final int RETRY_INTERVAL = 2000;
-        static private final Semaphore instance_lock = new Semaphore(1);
-        static private SessionThread self;
+    private class SessionThread extends Thread {
+        private final int RETRY_COUNT = 3;
+        private final int RETRY_INTERVAL = 2000;
+        private final int REGISTER = 0;
+        private final int DEREGISTER = 1;
         private boolean session_status;
         
-        static private class SessionCommand {
-            private enum Action {
-                REGISTER, DEREGISTER
-            }
-            
-            public Action action;
+        private class SessionCommand {
+            public int action;
             public String ec_endpoint;
-            public SessionCommand (Action op_code, String ec_endpoint) {
-                this.action = op_code;
+            public SessionCommand (int action, String ec_endpoint) {
+                this.action = action;
                 this.ec_endpoint = ec_endpoint;
             }
         }
 
         private final LinkedBlockingQueue<SessionCommand> command_channel =
                 new LinkedBlockingQueue<SessionCommand>();
-        private final LinkedBlockingQueue<Integer> response_channel =
-                new LinkedBlockingQueue<Integer>();
-        
-        private SessionThread () {}
-        
-        static public SessionThread instance () {
-            try {
-                instance_lock.acquire();
-                if (self == null) {
-                    logging("SessionThread.instance(): create instance");
-                    self = new SessionThread();
-                }
-                instance_lock.release();
-            } catch (InterruptedException e) {
-                logging("SessionThread.instance(): InterruptedException");
-            }
-            return self;
-        }
         
         public void register (String ec_endpoint) {
             logging("SessionThread.connect(%s)", ec_endpoint);
-            SessionCommand sc = new SessionCommand(SessionCommand.Action.REGISTER, ec_endpoint);
+            SessionCommand sc = new SessionCommand(REGISTER, ec_endpoint);
             try {
                 command_channel.add(sc);
             } catch (IllegalStateException e) {
@@ -249,10 +131,12 @@ public class DAN {
         
         public void deregister () {
             logging("SessionThread.disconnect()");
-            SessionCommand sc = new SessionCommand(SessionCommand.Action.DEREGISTER, "");
+            SessionCommand sc = new SessionCommand(DEREGISTER, "");
             try {
                 command_channel.add(sc);
-                response_channel.take();
+                synchronized (sc) {
+                    sc.wait();
+                }
             } catch (IllegalStateException e) {
                 logging("SessionThread.connect(): IllegalStateException, command channel is full");
             } catch (InterruptedException e) {
@@ -325,7 +209,9 @@ public class DAN {
                             //  set session_status to false because I've already retry <RETRY_COUNT> times
                             session_status = false;
                         }
-                        response_channel.add(0);
+                        synchronized (sc) {
+                            sc.notify();
+                        }
                         break;
                         
                     default:
@@ -339,50 +225,35 @@ public class DAN {
         
         public void kill () {
             logging("SessionThread.kill()");
+            if (status()) {
+                deregister();
+            }
+            
+            this.interrupt();
             try {
-                instance_lock.acquire();
-                if (self == null) {
-                    logging("SessionThread.kill(): not running, skip");
-                    return;
-                }
-                
-                if (status()) {
-                    deregister();
-                }
-                
-                self.interrupt();
-                try {
-                    self.join();
-                } catch (InterruptedException e) {
-                    logging("SessionThread.kill(): InterruptedException");
-                }
-                self = null;
-                logging("SessionThread.kill(): singleton cleaned");
-                instance_lock.release();
-            } catch (InterruptedException e1) {
+                this.join();
+            } catch (InterruptedException e) {
                 logging("SessionThread.kill(): InterruptedException");
             }
+            logging("SessionThread.kill(): killed");
         }
         
-        static public boolean status () {
-            if (self != null) {
-                return self.session_status;
-            }
-            return false;
+        public boolean status () {
+            return session_status;
         }
     }
 
-    static private class UpStreamThread extends Thread {
+    private class UpStreamThread extends Thread {
         String feature;
         final LinkedBlockingQueue<JSONArray> queue = new LinkedBlockingQueue<JSONArray>();
-        Reducer reducer;
+        AbstractReducer reducer;
 
         public UpStreamThread (String feature) {
             this.feature = feature;
-            this.reducer = Reducer.LAST;
+            this.reducer = AbstractReducer.LAST;
         }
 
-        public void enqueue (JSONArray data, Reducer reducer) {
+        public void enqueue (JSONArray data, AbstractReducer reducer) {
             enqueue(data);
             this.reducer = reducer;
         }
@@ -412,7 +283,7 @@ public class DAN {
                         data = reducer.reduce(data, tmp, i, count);
                     }
                     
-                    if (SessionThread.status()) {
+                    if (session_status()) {
                         logging("UpStreamThread(%s).run(): push %s", feature, data.toString());
                         try {
                             CSMAPI.push(d_id, feature, data);
@@ -432,19 +303,19 @@ public class DAN {
         }
     }
 
-    static private class DownStreamThread extends Thread {
+    private class DownStreamThread extends Thread {
         String feature;
-        Subscriber subscriber;
+        AbstractODFReceiver odf_receiver;
         String timestamp;
 
-        public DownStreamThread (String feature, Subscriber callback) {
+        public DownStreamThread (String feature, AbstractODFReceiver callback) {
             this.feature = feature;
-            this.subscriber = callback;
+            this.odf_receiver = callback;
             this.timestamp = "";
         }
         
-        public boolean has_subscriber (Subscriber subscriber) {
-            return this.subscriber.equals(subscriber);
+        public boolean has_odf_receiver (AbstractODFReceiver odf_receiver) {
+            return this.odf_receiver.equals(odf_receiver);
         }
 
         private void deliver_data (JSONArray dataset) throws JSONException {
@@ -462,7 +333,7 @@ public class DAN {
             }
             
             timestamp = new_timestamp;
-            subscriber.odf_handler(feature, new ODFObject(new_timestamp, new_data));
+            odf_receiver.receive(feature, new ODFObject(new_timestamp, new_data));
         }
 
         public void kill () {
@@ -475,7 +346,7 @@ public class DAN {
                 while (!isInterrupted()) {
                     try{
                         Thread.sleep(request_interval);
-                        if (SessionThread.status()) {
+                        if (session_status()) {
                             logging("DownStreamThread(%s).run(): pull", feature);
                             deliver_data(CSMAPI.pull(d_id, feature));
                         } else {
@@ -499,57 +370,59 @@ public class DAN {
     // ********************** //
     // * Private Containers * //
     // ********************** //
-    static private final Set<Subscriber> event_subscribers = Collections.synchronizedSet(new HashSet<Subscriber>());
-    static private String d_id;
-    static private JSONObject profile;
-    static private final ConcurrentHashMap<String, UpStreamThread> upstream_thread_pool = new ConcurrentHashMap<String, UpStreamThread>();
-    static private final ConcurrentHashMap<String, DownStreamThread> downstream_thread_pool = new ConcurrentHashMap<String, DownStreamThread>();
+    final Set<AbstractODFReceiver> event_odf_receivers = Collections.synchronizedSet(new HashSet<AbstractODFReceiver>());
+    final ConcurrentHashMap<String, UpStreamThread> upstream_thread_pool = new ConcurrentHashMap<String, UpStreamThread>();
+    final ConcurrentHashMap<String, DownStreamThread> downstream_thread_pool = new ConcurrentHashMap<String, DownStreamThread>();
+    final SearchECThread search_ec_thread = new SearchECThread();
+    final SessionThread session_thread = new SessionThread();
     // LinkedHashMap is ordered-map
-    static private final Map<String, Long> detected_ec_heartbeat = Collections.synchronizedMap(new LinkedHashMap<String, Long>());
+    final Map<String, Long> detected_ec_heartbeat = Collections.synchronizedMap(new LinkedHashMap<String, Long>());
+    String d_id;
+    JSONObject profile;
     
 
     // ************** //
     // * Public API * //
     // ************** //
     
-    static public void set_log_tag (String log_tag) {
-        DAN.log_tag = log_tag;
+    public String version () {
+        return VERSION;
+    }
+    
+    public void set_log_tag (String log_tag) {
+        this.log_tag = log_tag;
         CSMAPI.set_log_tag(log_tag);
     }
     
-    static public void init (Subscriber init_subscriber) {
+    public void init (AbstractODFReceiver init_odf_receiver) {
         logging("init()");
-        if (initialized) {
-            logging("init(): Already initialized");
-            return;
-        }
-        SearchECThread.instance().start();
-        SessionThread.instance().start();
+        search_ec_thread.start();
+        session_thread.start();
         
         CSMAPI.ENDPOINT = DEFAULT_EC_HOST;
         set_request_interval(150);
 
-        synchronized (event_subscribers) {
-            event_subscribers.clear();
-            event_subscribers.add(init_subscriber);
+        synchronized (event_odf_receivers) {
+            event_odf_receivers.clear();
+            event_odf_receivers.add(init_odf_receiver);
         }
         upstream_thread_pool.clear();
         downstream_thread_pool.clear();
         synchronized (detected_ec_heartbeat) {
             detected_ec_heartbeat.clear();
         }
-        initialized = true;
+        logging("init(): finished");
     }
 
-    static public String get_clean_mac_addr (String mac_addr) {
+    public String get_clean_mac_addr (String mac_addr) {
         return mac_addr.replace(":", "");
     }
 
-    static public String get_d_id (String mac_addr) {
+    public String get_d_id (String mac_addr) {
         return get_clean_mac_addr(mac_addr);
     }
 
-    static public String get_d_name () {
+    public String get_d_name () {
         try {
             if (profile == null) {
                 return "Error";
@@ -561,35 +434,35 @@ public class DAN {
         return "Error";
     }
 
-    static public void register (String d_id, JSONObject profile) {
+    public void register (String d_id, JSONObject profile) {
         register(CSMAPI.ENDPOINT, d_id, profile);
     }
     
-    static public void register (String ec_endpoint, String d_id, JSONObject profile) {
-        DAN.d_id = d_id;
-        DAN.profile = profile;
-        if (!DAN.profile.has("is_sim")) {
+    public void register (String ec_endpoint, String d_id, JSONObject profile) {
+        this.d_id = d_id;
+        this.profile = profile;
+        if (!this.profile.has("is_sim")) {
             try {
-                DAN.profile.put("is_sim", false);
+                this.profile.put("is_sim", false);
             } catch (JSONException e) {
                 logging("register(): JSONException");
             }
         }
 
-        SessionThread.instance().register(ec_endpoint);
+        session_thread.register(ec_endpoint);
     }
     
-    static public void reregister (String ec_endpoint) {
+    public void reregister (String ec_endpoint) {
         logging("reregister(%s)", ec_endpoint);
-        SessionThread.instance().deregister();
-        SessionThread.instance().register(ec_endpoint);
+        session_thread.deregister();
+        session_thread.register(ec_endpoint);
     }
 
-    static public void push (String feature, double[] data) {
-        push(feature, data, Reducer.LAST);
+    public void push (String feature, double[] data) {
+        push(feature, data, AbstractReducer.LAST);
     }
 
-    static public void push (String feature, double[] data, Reducer reducer) {
+    public void push (String feature, double[] data, AbstractReducer reducer) {
         JSONArray tmp = new JSONArray();
         for (int i = 0; i < data.length; i++) {
             tmp.put(data[i]);
@@ -597,11 +470,11 @@ public class DAN {
         push(feature, tmp, reducer);
     }
 
-    static public void push (String feature, float[] data) {
-        push(feature, data, Reducer.LAST);
+    public void push (String feature, float[] data) {
+        push(feature, data, AbstractReducer.LAST);
     }
 
-    static public void push (String feature, float[] data, Reducer reducer) {
+    public void push (String feature, float[] data, AbstractReducer reducer) {
         JSONArray tmp = new JSONArray();
         for (int i = 0; i < data.length; i++) {
             tmp.put(data[i]);
@@ -609,11 +482,11 @@ public class DAN {
         push(feature, tmp, reducer);
     }
 
-    static public void push (String feature, int[] data) {
-        push(feature, data, Reducer.LAST);
+    public void push (String feature, int[] data) {
+        push(feature, data, AbstractReducer.LAST);
     }
     
-    static public void push (String feature, int[] data, Reducer reducer) {
+    public void push (String feature, int[] data, AbstractReducer reducer) {
         JSONArray tmp = new JSONArray();
         for (int i = 0; i < data.length; i++) {
             tmp.put(data[i]);
@@ -621,11 +494,11 @@ public class DAN {
         push(feature, tmp, reducer);
     }
     
-    static public void push (String feature, JSONArray data) {
-        push(feature, data, Reducer.LAST);
+    public void push (String feature, JSONArray data) {
+        push(feature, data, AbstractReducer.LAST);
     }
     
-    static public void push (String feature, JSONArray data, Reducer reducer) {
+    public void push (String feature, JSONArray data, AbstractReducer reducer) {
         if (!device_feature_exists(feature)) {
             logging("push(%s): feature not exists", feature);
             return;
@@ -638,29 +511,35 @@ public class DAN {
         UpStreamThread ust = upstream_thread_pool.get(feature);
         ust.enqueue(data, reducer);
     }
+    
+    public void subscribe (String[] odf_list, AbstractODFReceiver odf_receiver) {
+        for (String odf: odf_list) {
+            subscribe(odf, odf_receiver);
+        }
+    }
 
-    static public void subscribe (String feature, Subscriber subscriber) {
-        if (feature.equals(CONTROL_CHANNEL)) {
-            synchronized (event_subscribers) {
-                event_subscribers.add(subscriber);
+    public void subscribe (String odf_list, AbstractODFReceiver odf_receiver) {
+        if (odf_list.equals(CONTROL_CHANNEL)) {
+            synchronized (event_odf_receivers) {
+                event_odf_receivers.add(odf_receiver);
             }
         } else {
-            if (!device_feature_exists(feature)) {
-                logging("subscribe(%s): feature not exists", feature);
+            if (!device_feature_exists(odf_list)) {
+                logging("subscribe(%s): feature not exists", odf_list);
                 return;
             }
-            if (!downstream_thread_pool.containsKey(feature)) {
-                DownStreamThread dst = new DownStreamThread(feature, subscriber);
-                downstream_thread_pool.put(feature, dst);
+            if (!downstream_thread_pool.containsKey(odf_list)) {
+                DownStreamThread dst = new DownStreamThread(odf_list, odf_receiver);
+                downstream_thread_pool.put(odf_list, dst);
                 dst.start();
             }
         }
     }
 
-    static public void unsubscribe (String feature) {
+    public void unsubscribe (String feature) {
         if (feature.equals(CONTROL_CHANNEL)) {
-            synchronized (event_subscribers) {
-                event_subscribers.clear();
+            synchronized (event_odf_receivers) {
+                event_odf_receivers.clear();
             }
         } else {
             DownStreamThread down_stream_thread = downstream_thread_pool.get(feature);
@@ -677,15 +556,15 @@ public class DAN {
         }
     }
 
-    static public void unsubscribe (Subscriber subscriber) {
-        synchronized (event_subscribers) {
-            event_subscribers.remove(subscriber);
+    public void unsubscribe (AbstractODFReceiver odf_receiver) {
+        synchronized (event_odf_receivers) {
+            event_odf_receivers.remove(odf_receiver);
         }
 
         for (Map.Entry<String, DownStreamThread> p: downstream_thread_pool.entrySet()) {
             String feature = p.getKey();
             DownStreamThread down_stream_thread = p.getValue();
-            if (down_stream_thread.has_subscriber(subscriber)) {
+            if (down_stream_thread.has_odf_receiver(odf_receiver)) {
                 down_stream_thread.kill();
                 try {
                     down_stream_thread.join();
@@ -698,16 +577,12 @@ public class DAN {
         }
     }
 
-    static public void deregister () {
-        SessionThread.instance().deregister();
+    public void deregister () {
+        session_thread.deregister();
     }
     
-    static public void shutdown () {
+    public void shutdown () {
         logging("shutdown()");
-        if (!initialized) {
-            logging("shutdown(): Already shutdown");
-            return;
-        }
         
         for (Map.Entry<String, UpStreamThread> p: upstream_thread_pool.entrySet()) {
             UpStreamThread t = p.getValue();
@@ -731,12 +606,13 @@ public class DAN {
         }
         downstream_thread_pool.clear();
         
-        SearchECThread.instance().kill();
-        SessionThread.instance().kill();
-        initialized = false;
+        search_ec_thread.kill();
+        session_thread.kill();
+
+        logging("shutdown(): finished");
     }
     
-    static public String[] available_ec () {
+    public String[] available_ec () {
         ArrayList<String> t = new ArrayList<String>();
         t.add(DEFAULT_EC_HOST);
         synchronized (detected_ec_heartbeat) {
@@ -751,22 +627,22 @@ public class DAN {
         return t.toArray(new String[]{});
     }
     
-    static public String ec_endpoint () {
+    public String ec_endpoint () {
         return CSMAPI.ENDPOINT;
     }
     
-    static public boolean session_status () {
-        return SessionThread.status();
+    public boolean session_status () {
+        return session_thread.status();
     }
 
-    static public long get_request_interval () {
-        return DAN.request_interval;
+    public long get_request_interval () {
+        return request_interval;
     }
 
-    static public void set_request_interval (long request_interval) {
+    public void set_request_interval (long request_interval) {
         if (request_interval > 0) {
             logging("set_request_interval(%d)", request_interval);
-            DAN.request_interval = request_interval;
+            this.request_interval = request_interval;
         }
     }
 
@@ -774,7 +650,7 @@ public class DAN {
     // ***************************** //
     // * Internal Helper Functions * //
     // ***************************** //
-    static private boolean device_feature_exists (String feature) {
+    private boolean device_feature_exists (String feature) {
         JSONArray df_list = profile.getJSONArray("df_list");
         for (int i = 0; i < df_list.length(); i++) {
             if (df_list.getString(i).equals(feature)) {
@@ -784,19 +660,19 @@ public class DAN {
         return false;
     }
     
-    static public void logging (String format, Object... args) {
+    public void logging (String format, Object... args) {
         logging(String.format(format, args));
     }
 
-    static private void logging (String message) {
+    private void logging (String message) {
         System.out.printf("[%s][%s] %s%n", log_tag, dan_log_tag, message);
     }
 
-    static private void broadcast_event (Event event, String message) {
-        logging("broadcast_control_message()");
-        synchronized (event_subscribers) {
-            for (Subscriber handler: event_subscribers) {
-                handler.odf_handler(CONTROL_CHANNEL, new ODFObject(event, message));
+    private void broadcast_event (Event event, String message) {
+        logging("broadcast_event()");
+        synchronized (event_odf_receivers) {
+            for (AbstractODFReceiver handler: event_odf_receivers) {
+                handler.receive(CONTROL_CHANNEL, new ODFObject(event, message));
             }
         }
     }
