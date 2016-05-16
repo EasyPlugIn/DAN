@@ -9,7 +9,7 @@ EasyConnect Device Application to Network 實作，使用 `CSMAPI <https://githu
 
 觀念
 -----
-* ``DAN`` 使用事件驅動的設計方式，API 不一定有回傳值，而是透過 ``Subscriber`` 回傳結果
+* ``DAN`` 使用事件驅動的設計方式，API 不一定有回傳值，而是透過 ``ODFHandler`` 回傳結果
 * ``DAN.push()`` 並不會立刻送出資料，而會把資料放入內部的 Queue，每 150 ms 向 EasyConnect CSM 送出
 
   - 若資料產生的速度很快（例如 Accelerometer），中間的資料預設會全部被 ``DAN`` 丟棄，這個行為可以用 ``Reducer`` 改變
@@ -71,34 +71,42 @@ API
   - ``event``: DAN 所產生的事件
   - ``message``: 事件相關訊息
 
-    +--------------------+----------------------+
-    | Event              | Message              |
-    +====================+======================+
-    | FOUND_NEW_EC       | 搜尋到的 Endpoint    |
-    +--------------------+----------------------+
-    | REGISTER_FAILED    | EC 的 Endpoint       |
-    +--------------------+----------------------+
-    | REGISTER_SUCCEED   | EC 的 Endpoint       |
-    +--------------------+----------------------+
-    | PUSH_FAILED        | Push 的 Feature Name |
-    +--------------------+----------------------+
-    | PUSH_SUCCEED       | Push 的 Feature Name |
-    +--------------------+----------------------+
-    | PULL_FAILED        | Push 的 Feature Name |
-    +--------------------+----------------------+
-    | DEREGISTER_FAILED  | EC 的 Endpoint       |
-    +--------------------+----------------------+
-    | DEREGISTER_SUCCEED | EC 的 Endpoint       |
-    +--------------------+----------------------+
+    +-----------------------+----------------------+
+    | Event                 | Message              |
+    +=======================+======================+
+    | INITIALIZATION_FAILED | 初始化失敗的原因     |
+    +-----------------------+----------------------+
+    | INITIALIZATION        | 空字串               |
+    +-----------------------+----------------------+
+    | SEARCHING_STARTED     | 空字串               |
+    +-----------------------+----------------------+
+    | FOUND_NEW_EC          | 搜尋到的 Endpoint    |
+    +-----------------------+----------------------+
+    | SEARCHING_STOPPED     | 空字串               |
+    +-----------------------+----------------------+
+    | REGISTER_FAILED       | EC 的 Endpoint       |
+    +-----------------------+----------------------+
+    | REGISTER_SUCCEED      | EC 的 Endpoint       |
+    +-----------------------+----------------------+
+    | PUSH_FAILED           | Push 的 Feature Name |
+    +-----------------------+----------------------+
+    | PUSH_SUCCEED          | Push 的 Feature Name |
+    +-----------------------+----------------------+
+    | PULL_FAILED           | Push 的 Feature Name |
+    +-----------------------+----------------------+
+    | DEREGISTER_FAILED     | EC 的 Endpoint       |
+    +-----------------------+----------------------+
+    | DEREGISTER_SUCCEED    | EC 的 Endpoint       |
+    +-----------------------+----------------------+
 
 
-``Subscriber``
+``ODFHandler``
 ````````````````
 用來訂閱 ODF 資料
 
-* ``public abstract void odf_handler (String feature, ODFObject odf_object);``
+* ``void receive (String odf, ODFObject odf_object);``
 
-  - ``feature`` 為 ODF 的 Feature Name
+  - ``odf`` 為 ODF 的 Feature Name
   - ``odf_object`` 為 ODF 的資料內容
 
 
@@ -108,11 +116,11 @@ API
 
 ``DAN`` 每 150 ms 才會送一次資料給 EC，期間累積的所有資料會經過 ``Reducer`` 處理
 
-* ``abstract public JSONArray reduce (JSONArray a, JSONArray b, int index, int last_index);``
+* ``JSONArray reduce (JSONArray a, JSONArray b, int b_index, int last_index);``
 
   - ``a`` 為目前所累積的資料
   - ``b`` 為 Queue 中的下一筆資料
-  - ``index`` 為 ``a`` 的 index 值
+  - ``b_index`` 為 ``b`` 的 index 值
   - ``last_index`` 為最後一筆累積資料的 index 值
 
 * 範例
@@ -141,22 +149,22 @@ API
       4.  最後將 ``[12]`` 送往 EC
 
 
-``static public void set_log_tag (String log_tag)``
-```````````````````
+``public void set_log_tag (String log_tag)``
+``````````````````````````````````````````````
 設定 debug 訊息的標籤
 
 
-``static public void init (Subscriber init_subscriber)``
-``````````````````````````````````````````````````````````
+``public void init (ODFHandler init_odf_handler)``
+````````````````````````````````````````````````````
 初始化 DAN
 
-* 參數 ``init_subscriber`` 會接收到 DAN 後續產生的所有事件，不需再另外 ``subscribe()``
+* 參數 ``init_odf_handler`` 會接收到 DAN 後續產生的所有事件，不需再另外 ``subscribe()``
 
 
-``static public void register ()``
-```````````````````````````````````````````````````````````````````
-* ``static public void register (String d_id, JSONObject profile)``
-* ``static public void register (String ec_endpoint, String d_id, JSONObject profile)``
+``public void register ()``
+`````````````````````````````
+* ``public void register (String d_id, JSONObject profile)``
+* ``public void register (String ec_endpoint, String d_id, JSONObject profile)``
 
 讓 DAN 註冊至 EC
 
@@ -171,21 +179,21 @@ API
   - ``"df_list"`` ：Device Feature 列表，需為 ``JSONArray`` ，每個 Feature Name 為一個 ``String``
 
 
-``static public void reregister (String ec_endpoint)``
-````````````````````````````````````````````````````````
+``public void reregister (String ec_endpoint)``
+`````````````````````````````````````````````````
 重新註冊至 ``ec_endpoint``
 
 
-``static public void push ()``
-````````````````````````````````
-* ``static public void push (String feature, double[] data)``
-* ``static public void push (String feature, double[] data, Reducer reducer)``
-* ``static public void push (String feature, float[] data)``
-* ``static public void push (String feature, float[] data, Reducer reducer)``
-* ``static public void push (String feature, int[] data)``
-* ``static public void push (String feature, int[] data, Reducer reducer)``
-* ``static public void push (String feature, JSONArray data)``
-* ``static public void push (String feature, JSONArray data, Reducer reducer)``
+``public void push ()``
+`````````````````````````
+* ``public void push (String idf, double[] data)``
+* ``public void push (String idf, double[] data, Reducer reducer)``
+* ``public void push (String idf, float[] data)``
+* ``public void push (String idf, float[] data, Reducer reducer)``
+* ``public void push (String idf, int[] data)``
+* ``public void push (String idf, int[] data, Reducer reducer)``
+* ``public void push (String idf, JSONArray data)``
+* ``public void push (String idf, JSONArray data, Reducer reducer)``
 
 送出資料至 EC
 
@@ -194,56 +202,53 @@ API
 * ``reducer`` 為合併資料用的物件，請參考 ``Reducer`` 的說明
 
 
-``static public void subscribe (String feature, Subscriber subscriber)``
-``````````````````````````````````````````````````````````````````````````
+``public void subscribe ()``
+``````````````````````````````
+* ``void subscribe (String odf_list[], ODFHandler odf_handler)``
+* ``void subscribe (String odf, ODFHandler odf_handler)``
+
 向 EC 訂閱資料
 
-* ``feature`` 為 Feature Name，請確保該 Feature 確實存在於該 EC
+* ``odf`` 為 Feature Name，請確保該 Feature 確實存在於該 EC
 
-  - 若 ``feature.equals("Control_channel")`` ， ``subscriber`` 會接收到 DAN 產生的事件
+  - 若 ``feature.equals("Control_channel")`` ， ``odf_handler`` 會接收到 DAN 產生的事件
 
-* ``subscriber`` 為 DAN 主動通知的接收者，請參考 ``Subscriber`` 的說明
+* ``odf_handler`` 為 DAN 主動通知的接收者，請參考 ``ODFHandler`` 的說明
 * ``"Control_channel"`` 可以被訂閱多次
 * 真實 ODF 只能被訂閱一次
 
 
-``static public void unsubscribe ()``
-```````````````````````````````````````
-* ``static public void unsubscribe (String feature)``
-* ``static public void unsubscribe (Subscriber subscriber)``
-
+``public void unsubscribe (ODFHandler odf_handler)``
+``````````````````````````````````````````````````````
 取消訂閱資料
 
-每個 Subscriber 可以同時 ``subscribe()`` 許多 Feature，故 ``unsubscribe()`` 提供兩種形式
-
-* 若使用 Feature Name 進行 Unsubscribe，該 Feature 的所有 Subscriber 都不會再收到新的資料
-* 若使用 Subscriber 進行 Unsubscribe，該 Subscriber 不會再收到新的資料
+每個 ``ODFHandler`` 可以同時 ``subscribe()`` 許多 Feature，Unsubscribe 之後，該 ``ODFHandler`` 不會再收到新的資料
 
 若 Unsubscribe 的對象為真實的 ODF（非 ``"Control_channel"`` ），則對應的 Thread 會關閉
 
 
-``static public void deregister ()``
-``````````````````````````````````````
+``public void deregister ()``
+```````````````````````````````
 從目前註冊的 EC 解除註冊
 
 
-``static public void shutdown ()``
-````````````````````````````````````
+``public void shutdown ()``
+`````````````````````````````
 關閉 DAN 內所有的 Thread，變為未初始化狀態
 
 
-``static public long get_request_interval ()``
-````````````````````````````````````````````````
+``public long get_request_interval ()``
+`````````````````````````````````````````
 取得目前每次傳送/取得資料之間的間隔
 
 
-``static public void set_request_interval (long request_interval)``
-`````````````````````````````````````````````````````````````````````
+``public void set_request_interval (long request_interval)``
+``````````````````````````````````````````````````````````````
 設定每次傳送/取得資料之間的間隔，必須為大於 ``0`` 的整數
 
 
-``static public String[] available_ec ()``
-````````````````````````````````````````````
+``public String[] available_ec ()``
+`````````````````````````````````````
 取得目前可用的 EC
 
 * EC 會定期透過 UDP Port 17000 廣播 ``"easyconnect"`` 訊息至同一個區域網路
@@ -251,15 +256,15 @@ API
 * 每次 ``available_ec()`` 被呼叫時，DAN 會將超過 ``3`` 秒沒有更新的 EC 去除
 
 
-``static public String ec_endpoint ()``
-`````````````````````````````````````````
+``public String ec_endpoint ()``
+``````````````````````````````````
 回傳目前連接的 EC Endpoint
 
 此回傳值並不代表是否有成功註冊，而是下次呼叫 ``register()`` 時預設會註冊的 Endpoint
 
 
-``static public boolean session_status ()``
-`````````````````````````````````````````````
+``public boolean session_status ()``
+``````````````````````````````````````
 回傳目前的連接狀態，true 代表已成功註冊，false 代表未曾註冊或註冊失敗
 
 此回傳值為 DAN 單方面的資訊，並不保證 EC 端的資訊相同，例如 EC 重開機以後，所有 DA 都會被視為無註冊，但 DA 端並不會立刻獲得此資訊，需在下次 push/pull 資料時才可能得知

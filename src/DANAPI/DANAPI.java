@@ -7,7 +7,11 @@ public interface DANAPI {
     public final String CONTROL_CHANNEL = "Control_channel";
     
     static public enum Event {
+        INITIALIZATION_FAILED,
+        INITIALIZED,
+        SEARCHING_STARTED,
         FOUND_NEW_EC,
+        SEARCHING_STOPPED,
         REGISTER_FAILED,
         REGISTER_SUCCEED,
         PUSH_FAILED,
@@ -41,13 +45,13 @@ public interface DANAPI {
         }
     }
 
-    static public abstract class AbstractODFReceiver {
-        abstract public void receive (String odf, ODFObject odf_object);
+    interface ODFHandler {
+        void receive (String odf, ODFObject odf_object);
     }
     
-    static public abstract class AbstractReducer {
-        abstract public JSONArray reduce (JSONArray a, JSONArray b, int b_index, int last_index);
-        static public final AbstractReducer LAST = new AbstractReducer () {
+    interface Reducer {
+        JSONArray reduce (JSONArray a, JSONArray b, int b_index, int last_index);
+        static final Reducer LAST = new Reducer () {
             @Override
             public JSONArray reduce(JSONArray a, JSONArray b, int b_index, int last_index) {
                 return b;
@@ -57,25 +61,24 @@ public interface DANAPI {
     
     String version ();
     void set_log_tag (String log_tag);
-    void init (AbstractODFReceiver init_odf_receiver);
+    void init (ODFHandler init_odf_handler);
     String get_clean_mac_addr (String mac_addr);
     String get_d_id (String mac_addr);
     String get_d_name ();
     void register (String d_id, JSONObject profile);
     void register (String ec_endpoint, String d_id, JSONObject profile);
     void reregister (String ec_endpoint);
-    void push (String feature, double[] data);
-    void push (String feature, double[] data, AbstractReducer reducer);
-    void push (String feature, float[] data);
-    void push (String feature, float[] data, AbstractReducer reducer);
-    void push (String feature, int[] data);
-    void push (String feature, int[] data, AbstractReducer reducer);
-    void push (String feature, JSONArray data);
-    void push (String feature, JSONArray data, AbstractReducer reducer);
-    void subscribe (String odf_list[], AbstractODFReceiver odf_receiver);
-    void subscribe (String odf_list, AbstractODFReceiver odf_receiver);
-    void unsubscribe (String feature);
-    void unsubscribe (AbstractODFReceiver odf_receiver);
+    void push (String idf, double[] data);
+    void push (String idf, double[] data, Reducer reducer);
+    void push (String idf, float[] data);
+    void push (String idf, float[] data, Reducer reducer);
+    void push (String idf, int[] data);
+    void push (String idf, int[] data, Reducer reducer);
+    void push (String idf, JSONArray data);
+    void push (String idf, JSONArray data, Reducer reducer);
+    void subscribe (String odf_list[], ODFHandler odf_handler);
+    void subscribe (String odf, ODFHandler odf_handler);
+    void unsubscribe (ODFHandler odf_handler);
     void deregister ();
     void shutdown ();
     String[] available_ec ();

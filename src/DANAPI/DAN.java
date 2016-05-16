@@ -24,7 +24,7 @@ public class DAN implements DANAPI {
     // ************************************************ //
     // * Constants or Semi-constants (Seldom changed) * //
     // ************************************************ //
-    private final String VERSION = "20160514";
+    private final String VERSION = "20160516";
     private String log_tag = "DAN";
     private final String dan_log_tag = "DAN";
     private final String DEFAULT_EC_HOST = "http://openmtc.darkgerm.com:9999";
@@ -246,14 +246,14 @@ public class DAN implements DANAPI {
     private class UpStreamThread extends Thread {
         String feature;
         final LinkedBlockingQueue<JSONArray> queue = new LinkedBlockingQueue<JSONArray>();
-        AbstractReducer reducer;
+        Reducer reducer;
 
         public UpStreamThread (String feature) {
             this.feature = feature;
-            this.reducer = AbstractReducer.LAST;
+            this.reducer = Reducer.LAST;
         }
 
-        public void enqueue (JSONArray data, AbstractReducer reducer) {
+        public void enqueue (JSONArray data, Reducer reducer) {
             enqueue(data);
             this.reducer = reducer;
         }
@@ -305,16 +305,16 @@ public class DAN implements DANAPI {
 
     private class DownStreamThread extends Thread {
         String feature;
-        AbstractODFReceiver odf_receiver;
+        ODFHandler odf_receiver;
         String timestamp;
 
-        public DownStreamThread (String feature, AbstractODFReceiver callback) {
+        public DownStreamThread (String feature, ODFHandler callback) {
             this.feature = feature;
             this.odf_receiver = callback;
             this.timestamp = "";
         }
         
-        public boolean has_odf_receiver (AbstractODFReceiver odf_receiver) {
+        public boolean has_odf_receiver (ODFHandler odf_receiver) {
             return this.odf_receiver.equals(odf_receiver);
         }
 
@@ -370,7 +370,7 @@ public class DAN implements DANAPI {
     // ********************** //
     // * Private Containers * //
     // ********************** //
-    final Set<AbstractODFReceiver> event_odf_receivers = Collections.synchronizedSet(new HashSet<AbstractODFReceiver>());
+    final Set<ODFHandler> event_odf_receivers = Collections.synchronizedSet(new HashSet<ODFHandler>());
     final ConcurrentHashMap<String, UpStreamThread> upstream_thread_pool = new ConcurrentHashMap<String, UpStreamThread>();
     final ConcurrentHashMap<String, DownStreamThread> downstream_thread_pool = new ConcurrentHashMap<String, DownStreamThread>();
     final SearchECThread search_ec_thread = new SearchECThread();
@@ -384,17 +384,19 @@ public class DAN implements DANAPI {
     // ************** //
     // * Public API * //
     // ************** //
-    
+    @Override
     public String version () {
         return VERSION;
     }
-    
+
+    @Override
     public void set_log_tag (String log_tag) {
         this.log_tag = log_tag;
         CSMAPI.set_log_tag(log_tag);
     }
-    
-    public void init (AbstractODFReceiver init_odf_receiver) {
+
+    @Override
+    public void init (ODFHandler init_odf_handler) {
         logging("init()");
         search_ec_thread.start();
         session_thread.start();
@@ -404,7 +406,7 @@ public class DAN implements DANAPI {
 
         synchronized (event_odf_receivers) {
             event_odf_receivers.clear();
-            event_odf_receivers.add(init_odf_receiver);
+            event_odf_receivers.add(init_odf_handler);
         }
         upstream_thread_pool.clear();
         downstream_thread_pool.clear();
@@ -414,14 +416,17 @@ public class DAN implements DANAPI {
         logging("init(): finished");
     }
 
+    @Override
     public String get_clean_mac_addr (String mac_addr) {
         return mac_addr.replace(":", "");
     }
 
+    @Override
     public String get_d_id (String mac_addr) {
         return get_clean_mac_addr(mac_addr);
     }
 
+    @Override
     public String get_d_name () {
         try {
             if (profile == null) {
@@ -434,10 +439,12 @@ public class DAN implements DANAPI {
         return "Error";
     }
 
+    @Override
     public void register (String d_id, JSONObject profile) {
         register(CSMAPI.ENDPOINT, d_id, profile);
     }
-    
+
+    @Override
     public void register (String ec_endpoint, String d_id, JSONObject profile) {
         this.d_id = d_id;
         this.profile = profile;
@@ -451,120 +458,112 @@ public class DAN implements DANAPI {
 
         session_thread.register(ec_endpoint);
     }
-    
+
+    @Override
     public void reregister (String ec_endpoint) {
         logging("reregister(%s)", ec_endpoint);
         session_thread.deregister();
         session_thread.register(ec_endpoint);
     }
 
-    public void push (String feature, double[] data) {
-        push(feature, data, AbstractReducer.LAST);
+    @Override
+    public void push (String idf, double[] data) {
+        push(idf, data, Reducer.LAST);
     }
 
-    public void push (String feature, double[] data, AbstractReducer reducer) {
+    @Override
+    public void push (String idf, double[] data, Reducer reducer) {
         JSONArray tmp = new JSONArray();
         for (int i = 0; i < data.length; i++) {
             tmp.put(data[i]);
         }
-        push(feature, tmp, reducer);
+        push(idf, tmp, reducer);
     }
 
-    public void push (String feature, float[] data) {
-        push(feature, data, AbstractReducer.LAST);
+    @Override
+    public void push (String idf, float[] data) {
+        push(idf, data, Reducer.LAST);
     }
 
-    public void push (String feature, float[] data, AbstractReducer reducer) {
+    @Override
+    public void push (String idf, float[] data, Reducer reducer) {
         JSONArray tmp = new JSONArray();
         for (int i = 0; i < data.length; i++) {
             tmp.put(data[i]);
         }
-        push(feature, tmp, reducer);
+        push(idf, tmp, reducer);
     }
 
-    public void push (String feature, int[] data) {
-        push(feature, data, AbstractReducer.LAST);
+    @Override
+    public void push (String idf, int[] data) {
+        push(idf, data, Reducer.LAST);
     }
-    
-    public void push (String feature, int[] data, AbstractReducer reducer) {
+
+    @Override
+    public void push (String idf, int[] data, Reducer reducer) {
         JSONArray tmp = new JSONArray();
         for (int i = 0; i < data.length; i++) {
             tmp.put(data[i]);
         }
-        push(feature, tmp, reducer);
+        push(idf, tmp, reducer);
     }
-    
-    public void push (String feature, JSONArray data) {
-        push(feature, data, AbstractReducer.LAST);
+
+    @Override
+    public void push (String idf, JSONArray data) {
+        push(idf, data, Reducer.LAST);
     }
-    
-    public void push (String feature, JSONArray data, AbstractReducer reducer) {
-        if (!device_feature_exists(feature)) {
-            logging("push(%s): feature not exists", feature);
+
+    @Override
+    public void push (String idf, JSONArray data, Reducer reducer) {
+        if (!device_feature_exists(idf)) {
+            logging("push(%s): feature not exists", idf);
             return;
         }
-        if (!upstream_thread_pool.containsKey(feature)) {
-            UpStreamThread ust = new UpStreamThread(feature);
-            upstream_thread_pool.put(feature, ust);
+        if (!upstream_thread_pool.containsKey(idf)) {
+            UpStreamThread ust = new UpStreamThread(idf);
+            upstream_thread_pool.put(idf, ust);
             ust.start();
         }
-        UpStreamThread ust = upstream_thread_pool.get(feature);
+        UpStreamThread ust = upstream_thread_pool.get(idf);
         ust.enqueue(data, reducer);
     }
-    
-    public void subscribe (String[] odf_list, AbstractODFReceiver odf_receiver) {
+
+    @Override
+    public void subscribe (String[] odf_list, ODFHandler odf_receiver) {
         for (String odf: odf_list) {
             subscribe(odf, odf_receiver);
         }
     }
 
-    public void subscribe (String odf_list, AbstractODFReceiver odf_receiver) {
-        if (odf_list.equals(CONTROL_CHANNEL)) {
+    @Override
+    public void subscribe (String odf, ODFHandler odf_handler) {
+        if (odf.equals(CONTROL_CHANNEL)) {
             synchronized (event_odf_receivers) {
-                event_odf_receivers.add(odf_receiver);
+                event_odf_receivers.add(odf_handler);
             }
         } else {
-            if (!device_feature_exists(odf_list)) {
-                logging("subscribe(%s): feature not exists", odf_list);
+            if (!device_feature_exists(odf)) {
+                logging("subscribe(%s): feature not exists", odf);
                 return;
             }
-            if (!downstream_thread_pool.containsKey(odf_list)) {
-                DownStreamThread dst = new DownStreamThread(odf_list, odf_receiver);
-                downstream_thread_pool.put(odf_list, dst);
+            if (!downstream_thread_pool.containsKey(odf)) {
+                DownStreamThread dst = new DownStreamThread(odf, odf_handler);
+                downstream_thread_pool.put(odf, dst);
                 dst.start();
             }
         }
     }
 
-    public void unsubscribe (String feature) {
-        if (feature.equals(CONTROL_CHANNEL)) {
-            synchronized (event_odf_receivers) {
-                event_odf_receivers.clear();
-            }
-        } else {
-            DownStreamThread down_stream_thread = downstream_thread_pool.get(feature);
-            if (down_stream_thread == null) {
-                return;
-            }
-            down_stream_thread.kill();
-            try {
-                down_stream_thread.join();
-            } catch (InterruptedException e) {
-                logging("unsubscribe(): DownStreamThread: InterruptedException");
-            }
-            downstream_thread_pool.remove(feature);
-        }
-    }
-
-    public void unsubscribe (AbstractODFReceiver odf_receiver) {
+    @Override
+    public void unsubscribe (ODFHandler odf_handler) {
         synchronized (event_odf_receivers) {
-            event_odf_receivers.remove(odf_receiver);
+            event_odf_receivers.remove(odf_handler);
         }
 
         for (Map.Entry<String, DownStreamThread> p: downstream_thread_pool.entrySet()) {
             String feature = p.getKey();
             DownStreamThread down_stream_thread = p.getValue();
-            if (down_stream_thread.has_odf_receiver(odf_receiver)) {
+            if (down_stream_thread.has_odf_receiver(odf_handler)) {
                 down_stream_thread.kill();
                 try {
                     down_stream_thread.join();
@@ -577,10 +576,12 @@ public class DAN implements DANAPI {
         }
     }
 
+    @Override
     public void deregister () {
         session_thread.deregister();
     }
-    
+
+    @Override
     public void shutdown () {
         logging("shutdown()");
         
@@ -611,7 +612,8 @@ public class DAN implements DANAPI {
 
         logging("shutdown(): finished");
     }
-    
+
+    @Override
     public String[] available_ec () {
         ArrayList<String> t = new ArrayList<String>();
         t.add(DEFAULT_EC_HOST);
@@ -626,19 +628,23 @@ public class DAN implements DANAPI {
         }
         return t.toArray(new String[]{});
     }
-    
+
+    @Override
     public String ec_endpoint () {
         return CSMAPI.ENDPOINT;
     }
-    
+
+    @Override
     public boolean session_status () {
         return session_thread.status();
     }
 
+    @Override
     public long get_request_interval () {
         return request_interval;
     }
 
+    @Override
     public void set_request_interval (long request_interval) {
         if (request_interval > 0) {
             logging("set_request_interval(%d)", request_interval);
@@ -671,7 +677,7 @@ public class DAN implements DANAPI {
     private void broadcast_event (Event event, String message) {
         logging("broadcast_event()");
         synchronized (event_odf_receivers) {
-            for (AbstractODFReceiver handler: event_odf_receivers) {
+            for (ODFHandler handler: event_odf_receivers) {
                 handler.receive(CONTROL_CHANNEL, new ODFObject(event, message));
             }
         }
