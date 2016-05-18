@@ -1,16 +1,16 @@
-package DANAPI;
+package DANapi;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
 
-public interface DANAPI {
+public interface DANapi {
     public final String CONTROL_CHANNEL = "Control_channel";
     
     static public enum Event {
         INITIALIZATION_FAILED,
         INITIALIZED,
         SEARCHING_STARTED,
-        FOUND_NEW_EC,
+        NEW_EC_DISCOVERED,
         SEARCHING_STOPPED,
         REGISTER_FAILED,
         REGISTER_SUCCEED,

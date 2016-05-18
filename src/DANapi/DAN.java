@@ -1,4 +1,4 @@
-package DANAPI;
+package DANapi;
 import java.io.IOException;
 import java.net.DatagramPacket;
 import java.net.DatagramSocket;
@@ -17,14 +17,14 @@ import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
 
-import CSMAPI.CSMAPI;
-import CSMAPI.CSMAPI.CSMError;
+import CSMapi.CSMapi;
+import CSMapi.CSMapi.CSMError;
 
-public class DAN implements DANAPI {
+public class DAN implements DANapi {
     // ************************************************ //
     // * Constants or Semi-constants (Seldom changed) * //
     // ************************************************ //
-    private final String VERSION = "20160516";
+    private final String VERSION = "20160518";
     private String log_tag = "DAN";
     private final String dan_log_tag = "DAN";
     private final String DEFAULT_EC_HOST = "http://openmtc.darkgerm.com:9999";
@@ -73,7 +73,7 @@ public class DAN implements DANAPI {
                         synchronized (detected_ec_heartbeat) {
                             if (!detected_ec_heartbeat.containsKey(ec_endpoint)) {
                                 logging("FOUND_NEW_EC: %s", ec_endpoint);
-                                broadcast_event(Event.FOUND_NEW_EC, ec_endpoint);
+                                broadcast_event(Event.NEW_EC_DISCOVERED, ec_endpoint);
                             }
                             detected_ec_heartbeat.put(ec_endpoint, System.currentTimeMillis());
                         }
@@ -152,14 +152,14 @@ public class DAN implements DANAPI {
                     switch (sc.action) {
                     case REGISTER:
                         logging("SessionThread.run(): REGISTER: %s", sc.ec_endpoint);
-                        if (session_status && !CSMAPI.ENDPOINT.equals(sc.ec_endpoint)) {
+                        if (session_status && !CSMapi.ENDPOINT.equals(sc.ec_endpoint)) {
                             logging("SessionThread.run(): REGISTER: Already registered to another EC");
                         } else {
-                            CSMAPI.ENDPOINT = sc.ec_endpoint;
+                            CSMapi.ENDPOINT = sc.ec_endpoint;
                             for (int i = 0; i < RETRY_COUNT; i++) {
                                 try {
-                                    session_status = CSMAPI.register(d_id, profile);
-                                    logging("SessionThread.run(): REGISTER: %s: %b", CSMAPI.ENDPOINT, session_status);
+                                    session_status = CSMapi.register(d_id, profile);
+                                    logging("SessionThread.run(): REGISTER: %s: %b", CSMapi.ENDPOINT, session_status);
                                     if (session_status) {
                                         break;
                                     }
@@ -171,24 +171,24 @@ public class DAN implements DANAPI {
                             }
                             
                             if (session_status) {
-                                broadcast_event(Event.REGISTER_SUCCEED, CSMAPI.ENDPOINT);
+                                broadcast_event(Event.REGISTER_SUCCEED, CSMapi.ENDPOINT);
                             } else {
                                 logging("SessionThread.run(): REGISTER: Give up");
-                                broadcast_event(Event.REGISTER_FAILED, CSMAPI.ENDPOINT);
+                                broadcast_event(Event.REGISTER_FAILED, CSMapi.ENDPOINT);
                             }
                         }
                         break;
                         
                     case DEREGISTER:
-                        logging("SessionThread.run(): DEREGISTER: %s", CSMAPI.ENDPOINT);
+                        logging("SessionThread.run(): DEREGISTER: %s", CSMapi.ENDPOINT);
                         if (!session_status) {
                             logging("SessionThread.run(): DEREGISTER: Not registered to any EC, abort");
                         } else {
                             boolean deregister_success = false;
                             for (int i = 0; i < RETRY_COUNT; i++) {
                                 try {
-                                    deregister_success = CSMAPI.deregister(d_id);
-                                    logging("SessionThread.run(): DEREGISTER: %s: %b", CSMAPI.ENDPOINT, deregister_success);
+                                    deregister_success = CSMapi.deregister(d_id);
+                                    logging("SessionThread.run(): DEREGISTER: %s: %b", CSMapi.ENDPOINT, deregister_success);
                                     if (deregister_success) {
                                         break;
                                     }
@@ -200,10 +200,10 @@ public class DAN implements DANAPI {
                             }
 
                             if (deregister_success) {
-                                broadcast_event(Event.DEREGISTER_SUCCEED, CSMAPI.ENDPOINT);
+                                broadcast_event(Event.DEREGISTER_SUCCEED, CSMapi.ENDPOINT);
                             } else {
                                 logging("SessionThread.run(): DEREGISTER: Give up");
-                                broadcast_event(Event.DEREGISTER_FAILED, CSMAPI.ENDPOINT);
+                                broadcast_event(Event.DEREGISTER_FAILED, CSMapi.ENDPOINT);
                             }
                             // No matter what result is,
                             //  set session_status to false because I've already retry <RETRY_COUNT> times
@@ -286,7 +286,7 @@ public class DAN implements DANAPI {
                     if (session_status()) {
                         logging("UpStreamThread(%s).run(): push %s", feature, data.toString());
                         try {
-                            CSMAPI.push(d_id, feature, data);
+                            CSMapi.push(d_id, feature, data);
                             broadcast_event(Event.PUSH_SUCCEED, feature);
                         } catch (CSMError e) {
                             logging("UpStreamThread(%s).run(): CSMError", feature);
@@ -348,7 +348,7 @@ public class DAN implements DANAPI {
                         Thread.sleep(request_interval);
                         if (session_status()) {
                             logging("DownStreamThread(%s).run(): pull", feature);
-                            deliver_data(CSMAPI.pull(d_id, feature));
+                            deliver_data(CSMapi.pull(d_id, feature));
                         } else {
                             logging("DownStreamThread(%s).run(): skip. (ec_status == false)", feature);
                         }
@@ -392,7 +392,7 @@ public class DAN implements DANAPI {
     @Override
     public void set_log_tag (String log_tag) {
         this.log_tag = log_tag;
-        CSMAPI.set_log_tag(log_tag);
+        CSMapi.set_log_tag(log_tag);
     }
 
     @Override
@@ -401,7 +401,7 @@ public class DAN implements DANAPI {
         search_ec_thread.start();
         session_thread.start();
         
-        CSMAPI.ENDPOINT = DEFAULT_EC_HOST;
+        CSMapi.ENDPOINT = DEFAULT_EC_HOST;
         set_request_interval(150);
 
         synchronized (event_odf_receivers) {
@@ -441,7 +441,7 @@ public class DAN implements DANAPI {
 
     @Override
     public void register (String d_id, JSONObject profile) {
-        register(CSMAPI.ENDPOINT, d_id, profile);
+        register(CSMapi.ENDPOINT, d_id, profile);
     }
 
     @Override
@@ -631,7 +631,7 @@ public class DAN implements DANAPI {
 
     @Override
     public String ec_endpoint () {
-        return CSMAPI.ENDPOINT;
+        return CSMapi.ENDPOINT;
     }
 
     @Override
