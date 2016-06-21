@@ -14,7 +14,7 @@ public class DAN extends Thread {
     interface DAN2DAI {
         void pull(String odf_name, JSONArray data);
     }
-    
+
     final int IOTTALK_BROADCAST_PORT = 17000;
     final int RETRY_COUNT = 3;
     final int RETRY_INTERVAL = 2000;
@@ -28,7 +28,7 @@ public class DAN extends Thread {
     String[] df_timestamp;
     String ctl_timestamp;
     boolean suspended;
-    
+
     public boolean init(String endpoint, String d_id, JSONObject profile, DAN2DAI dai_2_dai_ref) {
         logging("init()");
         this.d_id = d_id;
@@ -59,7 +59,7 @@ public class DAN extends Thread {
             logging("init(): JSONException");
             return false;
         }
-        
+
         for (int i = 0; i < RETRY_COUNT; i++) {
             try {
                 if (CSMapi.register(d_id, profile)) {
@@ -84,7 +84,7 @@ public class DAN extends Thread {
         }
         return false;
     }
-    
+
     public boolean push(String idf_name, JSONArray data) {
         logging("push(%s)", idf_name);
         try {
@@ -105,7 +105,7 @@ public class DAN extends Thread {
             return false;
         }
     }
-    
+
     public boolean deregister() {
         logging("deregister()");
         for (int i = 0; i < RETRY_COUNT; i++) {
@@ -127,7 +127,7 @@ public class DAN extends Thread {
         }
         return false;
     }
-    
+
     public void run () {
         logging("Polling: starts");
         while (registered) {
@@ -139,7 +139,7 @@ public class DAN extends Thread {
                 }
 
                 for (int i = 0; i < df_list.length; i++) {
-                    if (isInterrupted() || suspended) {
+                    if (!registered || suspended) {
                         break;
                     }
                     if (!df_is_odf[i] || !df_selected[i]) {
@@ -165,7 +165,7 @@ public class DAN extends Thread {
         }
         logging("Polling: stops");
     }
-    
+
     JSONArray pull (String odf_name, int index) throws JSONException, CSMapi.CSMError {
         JSONArray dataset = CSMapi.pull(d_id, odf_name);
         if (dataset == null || dataset.length() == 0) {
@@ -185,7 +185,7 @@ public class DAN extends Thread {
         }
         return dataset.getJSONArray(0).getJSONArray(1);
     }
-    
+
     void handle_control_message (JSONArray data) {
         try {
             switch (data.getString(0)) {
@@ -214,7 +214,7 @@ public class DAN extends Thread {
     // ***************************** //
     // * Internal Helper Functions * //
     // ***************************** //
-    
+
     String search () {
         try {
             DatagramSocket socket = new DatagramSocket(null);
@@ -236,7 +236,7 @@ public class DAN extends Thread {
             return null;
         }
     }
-    
+
     void logging (String format, Object... args) {
         logging(String.format(format, args));
     }
