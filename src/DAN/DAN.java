@@ -29,9 +29,9 @@ public class DAN extends Thread {
     String ctl_timestamp;
     boolean suspended;
 
-    public boolean init(String endpoint, String d_id, JSONObject profile, DAN2DAI dai_2_dai_ref) {
+    public boolean init(String endpoint, String mac_addr, JSONObject profile, DAN2DAI dai_2_dai_ref) {
         logging("init()");
-        this.d_id = d_id;
+        this.d_id = mac_addr.replace(":", "");
         this.dai_2_dai_ref = dai_2_dai_ref;
         if (!registered) {
             if (endpoint == null) {
@@ -55,10 +55,13 @@ public class DAN extends Thread {
             }
             ctl_timestamp = "";
             suspended = true;
+
+            profile.put("d_name", profile.getString("dm_name") + d_id.substring(d_id.length() - 4));
         } catch (JSONException e) {
             logging("init(): JSONException");
             return false;
         }
+
 
         for (int i = 0; i < RETRY_COUNT; i++) {
             try {
@@ -108,11 +111,12 @@ public class DAN extends Thread {
 
     public boolean deregister() {
         logging("deregister()");
+        // stop polling first
+        registered = false;
         for (int i = 0; i < RETRY_COUNT; i++) {
             try {
                 if (CSMapi.deregister(d_id)) {
                     logging("deregister(): Deregister succeed: %s", CSMapi.ENDPOINT);
-                    registered = false;
                     return true;
                 }
             } catch (CSMapi.CSMError e) {
@@ -125,6 +129,7 @@ public class DAN extends Thread {
                 logging("deregister(): InterruptedException");
             }
         }
+        // sorry, I give up
         return false;
     }
 
