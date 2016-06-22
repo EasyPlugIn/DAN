@@ -5,6 +5,7 @@ import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
+import java.io.InterruptedIOException;
 import java.io.OutputStream;
 import java.net.HttpURLConnection;
 import java.net.MalformedURLException;
@@ -28,7 +29,7 @@ public class CSMapi {
 		}
 	}
 
-	static public boolean register (String d_id, JSONObject profile) throws CSMError, JSONException {
+	static public boolean register (String d_id, JSONObject profile) throws CSMError, JSONException, InterruptedIOException {
 		try {
 	        String url = ENDPOINT +"/"+ d_id;
 			logging("register(): Response from %s", url);
@@ -48,7 +49,7 @@ public class CSMapi {
 		return false;
 	}
 
-    static public boolean deregister (String d_id) throws CSMError {
+    static public boolean deregister (String d_id) throws CSMError, InterruptedIOException {
 		try {
 			String url = ENDPOINT +"/"+ d_id;
 			logging("[deregister] "+ url);
@@ -66,7 +67,7 @@ public class CSMapi {
 		return false;
     }
 
-    static public boolean push (String d_id, String df_name, JSONArray data) throws CSMError, JSONException {
+    static public boolean push (String d_id, String df_name, JSONArray data) throws CSMError, JSONException, InterruptedIOException {
     	try {
 			//logging(d_id +" pushing to "+ ENDPOINT);
     	    JSONObject obj = new JSONObject();
@@ -86,7 +87,7 @@ public class CSMapi {
 		return false;
     }
 
-    static public JSONArray pull (String d_id, String df_name) throws JSONException, CSMError {
+    static public JSONArray pull (String d_id, String df_name) throws JSONException, CSMError, InterruptedIOException {
 	    try {
 			//logging(d_id +" pulling from "+ ENDPOINT);
 			String url = ENDPOINT +"/"+ d_id + "/" + df_name;
@@ -106,7 +107,7 @@ public class CSMapi {
 		return null;
 	}
 
-    static public JSONObject tree () throws CSMError {
+    static public JSONObject tree () throws CSMError, InterruptedIOException {
 	    try {
 			//logging(d_id +" pulling from "+ ENDPOINT);
 			String url = ENDPOINT +"/tree";
@@ -135,27 +136,27 @@ public class CSMapi {
             }
         }
 
-    	static public response get (String url_str) {
+    	static public response get (String url_str) throws InterruptedIOException {
     		return request("GET", url_str, null);
         }
 
-    	static public response post (String url_str, JSONObject post_body) {
+    	static public response post (String url_str, JSONObject post_body) throws InterruptedIOException {
     		return request("POST", url_str, post_body.toString());
     	}
 
-    	static public response delete (String url_str) {
+    	static public response delete (String url_str) throws InterruptedIOException {
     		return request("DELETE", url_str, null);
     	}
 
-    	static public response put (String url_str, JSONObject put_body) {
+    	static public response put (String url_str, JSONObject put_body) throws InterruptedIOException {
     		return put(url_str, put_body.toString());
     	}
 
-    	static public response put (String url_str, String post_body) {
+    	static public response put (String url_str, String post_body) throws InterruptedIOException {
     		return request("PUT", url_str, post_body);
     	}
 
-    	static private response request (String method, String url_str, String request_body) {
+    	static private response request (String method, String url_str, String request_body) throws InterruptedIOException {
     		try {
     			URL url = new URL(url_str);
     			HttpURLConnection connection = (HttpURLConnection)url.openConnection();
@@ -188,9 +189,12 @@ public class CSMapi {
                 reader.close();
                 return new response(body, status_code);
     		} catch (MalformedURLException e) {
-    			e.printStackTrace();
-    			logging("MalformedURLException");
-            	return new response("MalformedURLException", 400);
+				e.printStackTrace();
+				logging("MalformedURLException");
+				return new response("MalformedURLException", 400);
+			} catch (InterruptedIOException e) {
+                e.printStackTrace();
+                throw e;
     		} catch (IOException e) {
     			e.printStackTrace();
     			logging("IOException");

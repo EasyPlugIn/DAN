@@ -5,6 +5,7 @@ import org.json.JSONException;
 import org.json.JSONObject;
 
 import java.io.IOException;
+import java.io.InterruptedIOException;
 import java.net.DatagramPacket;
 import java.net.DatagramSocket;
 import java.net.InetAddress;
@@ -74,9 +75,11 @@ public class DAN extends Thread {
                     return true;
                 }
             } catch (CSMapi.CSMError e) {
-                logging("init(): REGISTER: CSMError");
+                logging("init(): REGISTER: CSMError: %s", e.getMessage());
             } catch (JSONException e) {
                 logging("init(): JSONException: %s", e.getMessage());
+            } catch (InterruptedIOException e) {
+                logging("init(): InterruptedIOException: %s", e.getMessage());
             }
             logging("init(): Register failed, wait %d milliseconds before retry", RETRY_INTERVAL);
             try {
@@ -102,11 +105,12 @@ public class DAN extends Thread {
             return CSMapi.push(d_id, idf_name, data);
         } catch (CSMapi.CSMError e) {
             logging("push(): CSMError: %s", e.getMessage());
-            return false;
         } catch (JSONException e) {
             logging("push(): JSONException: %s", e.getMessage());
-            return false;
+        } catch (InterruptedIOException e) {
+            logging("deregister(): DEREGISTER: InterruptedIOException: %s", e.getMessage());
         }
+        return false;
     }
 
     public boolean deregister() {
@@ -120,7 +124,9 @@ public class DAN extends Thread {
                     return true;
                 }
             } catch (CSMapi.CSMError e) {
-                logging("deregister(): DEREGISTER: CSMError");
+                logging("deregister(): DEREGISTER: CSMError: %s", e.getMessage());
+            } catch (InterruptedIOException e) {
+                logging("deregister(): DEREGISTER: InterruptedIOException: %s", e.getMessage());
             }
             logging("deregister(): Deregister failed, wait %d milliseconds before retry", RETRY_INTERVAL);
             try {
@@ -136,7 +142,7 @@ public class DAN extends Thread {
     public void run () {
         logging("Polling: starts");
         while (registered) {
-            try{
+            try {
                 JSONArray data = pull("__Ctl_O__", 0);
                 if (data != null) {
                     handle_control_message(data);
@@ -157,21 +163,24 @@ public class DAN extends Thread {
                     dai_2_dai_ref.pull(df_list[i], data);
                 }
             } catch (JSONException e) {
-                logging("Polling: JSONException");
+                logging("Polling: JSONException: %s", e.getMessage());
             } catch (CSMapi.CSMError e) {
-                logging("Polling: CSMError");
+                logging("Polling: CSMError: %s", e.getMessage());
+            } catch (InterruptedIOException e) {
+                logging("Polling: InterruptedIOException: %s", e.getMessage());
+                break;
             }
 
             try {
                 Thread.sleep(50);
             } catch (InterruptedException e) {
-                logging("Polling: sleep: InterruptedException");
+                logging("Polling: InterruptedException: %s", e.getMessage());
             }
         }
         logging("Polling: stops");
     }
 
-    JSONArray pull (String odf_name, int index) throws JSONException, CSMapi.CSMError {
+    JSONArray pull (String odf_name, int index) throws JSONException, CSMapi.CSMError, InterruptedIOException {
         JSONArray dataset = CSMapi.pull(d_id, odf_name);
         if (dataset == null || dataset.length() == 0) {
             return null;
