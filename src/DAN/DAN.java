@@ -20,8 +20,9 @@ public class DAN extends Thread {
     final int RETRY_COUNT = 3;
     final int RETRY_INTERVAL = 2000;
     public final String log_tag = "MorSensor";
-    DAN2DAI dai_2_dai_ref;
-    String d_id;
+    DAN2DAI dai2dai_ref;
+    String mac_addr;
+    JSONObject profile;
     boolean registered;
     String[] df_list;
     boolean[] df_selected;
@@ -30,44 +31,54 @@ public class DAN extends Thread {
     String ctl_timestamp;
     boolean suspended;
 
-    public boolean init(String endpoint, String mac_addr, JSONObject profile, DAN2DAI dai_2_dai_ref) {
+    public String init(DAN2DAI dai2dai_ref, String endpoint, String mac_addr, JSONObject profile) {
         logging("init()");
-        this.d_id = mac_addr.replace(":", "");
-        this.dai_2_dai_ref = dai_2_dai_ref;
-        if (!registered) {
-            if (endpoint == null) {
-                CSMapi.ENDPOINT = search();
-            } else {
-                CSMapi.ENDPOINT = endpoint;
-            }
+        this.dai2dai_ref = dai2dai_ref;
+        this.mac_addr = mac_addr.replace(":", "");
+        if (endpoint == null) {
+            endpoint = search();
         }
 
-        try {
-            JSONArray json_df_list = profile.getJSONArray("df_list");
-            df_list = new String[json_df_list.length()];
-            df_selected = new boolean[df_list.length];
-            df_is_odf = new boolean[df_list.length];
-            df_timestamp = new String[df_list.length];
-            for (int i = 0; i < df_list.length; i++) {
-                df_list[i] = json_df_list.getString(i);
-                df_selected[i] = false;
-                df_is_odf[i] = true;
-                df_timestamp[i] = "";
-            }
-            ctl_timestamp = "";
-            suspended = true;
+        if (register(endpoint, profile)) {
+            return CSMapi.ENDPOINT;
+        }
+        return "";
+    }
 
-            profile.put("d_name", profile.getString("dm_name") + d_id.substring(d_id.length() - 4));
+    public boolean register (String endpoint, JSONObject profile) {
+        if (endpoint != null) {
+            CSMapi.ENDPOINT = endpoint;
+        }
+        if (CSMapi.ENDPOINT == null) {
+            return false;
+        }
+
+        this.profile = profile;
+        try {
+            profile.put("d_name", profile.getString("dm_name") + this.mac_addr.substring(this.mac_addr.length() - 4));
         } catch (JSONException e) {
             logging("init(): JSONException");
             return false;
         }
 
-
         for (int i = 0; i < RETRY_COUNT; i++) {
             try {
-                if (CSMapi.register(d_id, profile)) {
+                if (CSMapi.register(this.mac_addr, profile)) {
                     logging("init(): Register succeed: %s", CSMapi.ENDPOINT);
+                    JSONArray json_df_list = profile.getJSONArray("df_list");
+                    df_list = new String[json_df_list.length()];
+                    df_selected = new boolean[df_list.length];
+                    df_is_odf = new boolean[df_list.length];
+                    df_timestamp = new String[df_list.length];
+                    for (int j = 0; j < df_list.length; j++) {
+                        df_list[j] = json_df_list.getString(j);
+                        df_selected[j] = false;
+                        df_is_odf[j] = true;
+                        df_timestamp[j] = "";
+                    }
+                    ctl_timestamp = "";
+                    suspended = true;
+
                     if (!registered) {
                         registered = true;
                         this.start();
@@ -100,9 +111,15 @@ public class DAN extends Thread {
             for (int i = 0; i < df_list.length; i++) {
                 if (idf_name.equals(df_list[i])) {
                     df_is_odf[i] = false;
+                    if (!df_selected[i]) {
+                        return false;
+                    }
                 }
             }
-            return CSMapi.push(d_id, idf_name, data);
+            if (suspended && !idf_name.equals("__Ctl_I__")) {
+                return false;
+            }
+            return CSMapi.push(mac_addr, idf_name, data);
         } catch (CSMapi.CSMError e) {
             logging("push(): CSMError: %s", e.getMessage());
         } catch (JSONException e) {
@@ -115,11 +132,14 @@ public class DAN extends Thread {
 
     public boolean deregister() {
         logging("deregister()");
+        if (!registered) {
+            return true;
+        }
         // stop polling first
         registered = false;
         for (int i = 0; i < RETRY_COUNT; i++) {
             try {
-                if (CSMapi.deregister(d_id)) {
+                if (CSMapi.deregister(mac_addr)) {
                     logging("deregister(): Deregister succeed: %s", CSMapi.ENDPOINT);
                     return true;
                 }
@@ -145,8 +165,11 @@ public class DAN extends Thread {
             try {
                 JSONArray data = pull("__Ctl_O__", 0);
                 if (data != null) {
-                    handle_control_message(data);
-                    dai_2_dai_ref.pull("Control", data);
+                    if (handle_control_message(data)) {
+                        dai2dai_ref.pull("Control", data);
+                    } else {
+                        logging("The command message is problematic, abort");
+                    }
                 }
 
                 for (int i = 0; i < df_list.length; i++) {
@@ -160,7 +183,7 @@ public class DAN extends Thread {
                     if (data == null) {
                         continue;
                     }
-                    dai_2_dai_ref.pull(df_list[i], data);
+                    dai2dai_ref.pull(df_list[i], data);
                 }
             } catch (JSONException e) {
                 logging("Polling: JSONException: %s", e.getMessage());
@@ -181,7 +204,7 @@ public class DAN extends Thread {
     }
 
     JSONArray pull (String odf_name, int index) throws JSONException, CSMapi.CSMError, InterruptedIOException {
-        JSONArray dataset = CSMapi.pull(d_id, odf_name);
+        JSONArray dataset = CSMapi.pull(mac_addr, odf_name);
         if (dataset == null || dataset.length() == 0) {
             return null;
         }
@@ -200,29 +223,36 @@ public class DAN extends Thread {
         return dataset.getJSONArray(0).getJSONArray(1);
     }
 
-    void handle_control_message (JSONArray data) {
+    boolean handle_control_message (JSONArray data) {
+        logging(data.toString());
         try {
             switch (data.getString(0)) {
-            case "RESUME":
-                suspended = false;
-                break;
-            case "SUSPEND":
-                suspended = true;
-                break;
-            case "SET_DF_STATUS":
-                final String flags = data.getJSONObject(1).getJSONArray("cmd_params").getString(0);
-                for(int i = 0; i < flags.length(); i++) {
-                    if(flags.charAt(i) == '0') {
-                        df_selected[i] = false;
-                    } else {
-                        df_selected[i] = true;
+                case "RESUME":
+                    suspended = false;
+                    break;
+                case "SUSPEND":
+                    suspended = true;
+                    break;
+                case "SET_DF_STATUS":
+                    final String flags = data.getJSONObject(1).getJSONArray("cmd_params").getString(0);
+                    if (flags.length() != df_list.length) {
+                        logging("SET_DF_STATUS flag length & df_list mismatch, abort");
+                        return false;
                     }
-                }
-                break;
+                    for (int i = 0; i < flags.length(); i++) {
+                        if (flags.charAt(i) == '0') {
+                            df_selected[i] = false;
+                        } else {
+                            df_selected[i] = true;
+                        }
+                    }
+                    break;
             }
+            return true;
         } catch (JSONException e) {
             logging("handle_control_message(): JSONException");
         }
+        return false;
     }
 
     // ***************************** //
