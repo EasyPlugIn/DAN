@@ -1,4 +1,4 @@
-IoTtalk DAN v1
+IoTtalk SDK v1
 ===============================================================================
 
 The IoTtalk Device Application to Network implementation.
